@@ -1,0 +1,16 @@
+[workspace]
+resolver = "3"
+members = ["crates/grid-core", "crates/grid-settings", "crates/grid-windows", "crates/grid-app"]
+
+[workspace.package]
+version = "1.0.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+
+# Small, fast release builds.
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

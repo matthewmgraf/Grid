@@ -1,0 +1,555 @@
+export { SetupWindow, UninstallWindow } from "setup.slint";
+export { AdminPrompt } from "admin.slint";
+import { AboutSlint, Button, CheckBox, ComboBox, GroupBox, HorizontalBox, LineEdit, Palette, ScrollView, Slider, SpinBox, TabWidget, VerticalBox } from "std-widgets.slint";
+
+export struct MonitorRow {
+    label: string,
+    custom: bool,
+    cols: int,
+    rows: int,
+}
+
+component Label inherits Text {
+    vertical-alignment: center;
+    min-width: 90px;
+}
+
+component ColorField inherits HorizontalLayout {
+    in property <string> label;
+    in-out property <string> value;
+    callback edited();
+    spacing: 8px;
+    Label { text: root.label; }
+    LineEdit { text <=> root.value; placeholder-text: "#RRGGBB"; edited => { root.edited(); } }
+}
+
+/// The inputs bound to one command. Clicking an input (or Add input) waits for the user to
+/// press the key or mouse button they want.
+component BindingGroup inherits GroupBox {
+    in property <string> hint;
+    in property <[string]> inputs;
+    /// Row waiting for a key press, or -1.
+    in property <int> capturing: -1;
+    /// Any group is waiting, so other buttons are disabled.
+    in property <bool> busy;
+    callback capture(int);
+    callback add();
+    callback remove(int);
+
+    VerticalBox {
+        Text { text: root.hint; wrap: word-wrap; }
+        for name[i] in root.inputs: HorizontalBox {
+            padding: 0;
+            Button {
+                horizontal-stretch: 1;
+                text: root.capturing == i ? "Press a key or mouse button… (left-click elsewhere to cancel)" : name;
+                primary: root.capturing == i;
+                enabled: !root.busy || root.capturing == i;
+                clicked => { root.capture(i); }
+            }
+            Button {
+                text: "Remove";
+                enabled: !root.busy;
+                clicked => { root.remove(i); }
+            }
+        }
+        HorizontalBox {
+            padding: 0;
+            alignment: start;
+            Button {
+                text: "Add input";
+                enabled: !root.busy;
+                clicked => { root.add(); }
+            }
+        }
+    }
+}
+
+/// A scrolling tab page. Slint (1.18) measures wrapped text as one line when working out how far
+/// a ScrollView scrolls, which cut off the bottom of a page in a narrow window. The empty space at
+/// the end makes up for a few such lines. (Binding the scroll height to where the last item lands
+/// is a binding loop in Slint.)
+component TabPage inherits ScrollView {
+    VerticalBox {
+        alignment: start;
+        @children
+        Rectangle { height: 40px; }
+    }
+}
+
+/// One global hotkey: its name, the current key combination, and buttons to change or clear it.
+component HotkeyRow inherits HorizontalBox {
+    in property <string> label;
+    in property <string> value;
+    in property <bool> capturing;
+    in property <bool> busy;
+    callback capture();
+    callback clear();
+    padding: 0;
+    Label { text: root.label; min-width: 180px; }
+    Button {
+        horizontal-stretch: 1;
+        text: root.capturing ? "Press keys…" : root.value == "" ? "Not set" : root.value;
+        primary: root.capturing;
+        enabled: !root.busy || root.capturing;
+        clicked => { root.capture(); }
+    }
+    Button {
+        text: "Clear";
+        enabled: !root.busy && root.value != "";
+        clicked => { root.clear(); }
+    }
+}
+
+export component SettingsWindow inherits Window {
+    title: "Grid Settings";
+    preferred-width: 640px;
+    preferred-height: 560px;
+    // Also enforced by the app (grid-app main.rs), so snapping can't shrink it further.
+    min-width: 520px;
+    min-height: 440px;
+
+    in property <string> version;
+    in property <image> logo;
+    /// Message at the bottom left; cleared when switching tabs.
+    in-out property <string> status;
+    /// True when the form differs from the saved settings; enables Save.
+    in property <bool> dirty;
+    in-out property <string> appearance: "System";
+    in-out property <int> cols: 8;
+    in-out property <int> rows: 8;
+    in-out property <bool> transpose-portrait: true;
+    in-out property <[MonitorRow]> monitors;
+    in-out property <float> overlay-opacity: 0.1;
+    in-out property <string> line-color;
+    in-out property <string> start-color;
+    in-out property <string> target-color;
+    /// Inputs bound to each command, by name.
+    in property <[string]> resize-inputs;
+    in property <[string]> move-inputs;
+    in property <[string]> cancel-inputs;
+    /// The binding waiting for a key press: command name and row, or "" / -1.
+    in-out property <string> capturing-command;
+    in-out property <int> capturing-index: -1;
+    /// Shown as a confirmation dialog when non-empty: the captured input (`conflict-input`) is
+    /// bound to another action. The capturing row stays reserved until it's answered.
+    in property <string> conflict-message;
+    in property <string> conflict-input;
+    in-out property <int> gap-between;
+    in-out property <int> gap-edges;
+    in-out property <bool> blur: false;
+    in-out property <string> tint-color;
+    /// Hotkeys as text ("Ctrl+Alt+Z"), "" when not set.
+    in-out property <string> hotkey-undo;
+    in-out property <string> hotkey-save;
+    in-out property <string> hotkey-restore;
+    /// The hotkey waiting for a key press ("undo", "save", "restore"), or "".
+    in-out property <string> capturing-hotkey;
+    in-out property <bool> splash: true;
+    /// Windows settings, changed right away when toggled (not with Save).
+    in property <bool> os-available;
+    in-out property <bool> drag-full-windows;
+    /// Installation, shown on the General tab when the platform supports it.
+    in property <bool> install-available;
+    in property <string> install-status;
+    in property <bool> installed;
+    /// Start with Windows; changed right away (not with Save).
+    in-out property <bool> autostart;
+    in-out property <bool> update-at-startup: true;
+    in-out property <bool> update-silently;
+    callback install-clicked();
+    callback uninstall-clicked();
+    callback autostart-changed(bool);
+    /// The engine's administrator state: 0 not running, 1 normal, 2 administrator.
+    in property <bool> admin-available;
+    in property <int> admin-state;
+    in-out property <bool> never-ask-admin;
+    callback restart-as-admin();
+    property <bool> busy: root.capturing-index >= 0 || root.capturing-hotkey != "";
+
+    callback monitor-edited(int, bool, int, int);
+    /// The dialog's answer: true moves the input to the capturing row, false keeps it where it is.
+    callback resolve-conflict(bool);
+    /// Wait for a key press for (command, row).
+    callback capture(string, int);
+    callback add-binding(string);
+    callback remove-binding(string, int);
+    /// Any user edit, so the app can recompute `dirty`.
+    callback edited();
+    callback save();
+    callback close-requested();
+    callback capture-hotkey(string);
+    callback clear-hotkey(string);
+    /// Puts the overlay colours and opacity back to the defaults.
+    callback reset-overlay();
+    /// A Windows setting was toggled: (name, new value). Only "drag" for now.
+    callback os-setting-changed(string, bool);
+
+    function apply-appearance() {
+        Palette.color-scheme = root.appearance == "Dark" ? ColorScheme.dark
+            : root.appearance == "Light" ? ColorScheme.light : ColorScheme.unknown;
+    }
+
+    init => {
+        root.apply-appearance();
+    }
+    changed appearance => {
+        root.apply-appearance();
+    }
+
+    VerticalBox {
+        TabWidget {
+            changed current-index => { root.status = ""; }
+            Tab {
+                title: "Grid";
+                TabPage {
+                        GroupBox {
+                            title: "Default grid";
+                            HorizontalBox {
+                                Label { text: "Columns"; min-width: 0; }
+                                SpinBox { minimum: 1; maximum: 64; value <=> root.cols; edited(v) => { self.value = Math.clamp(v, 1, 64); root.edited(); } }
+                                Label { text: "Rows"; min-width: 0; }
+                                SpinBox { minimum: 1; maximum: 64; value <=> root.rows; edited(v) => { self.value = Math.clamp(v, 1, 64); root.edited(); } }
+                            }
+                        }
+                        GroupBox {
+                            title: "Gaps (pixels at 100% scaling)";
+                            HorizontalBox {
+                                Label { text: "Between windows"; min-width: 0; }
+                                SpinBox { minimum: 0; maximum: 100; value <=> root.gap-between; edited(v) => { self.value = Math.clamp(v, 0, 100); root.edited(); } }
+                                Label { text: "At screen edges"; min-width: 0; }
+                                SpinBox { minimum: 0; maximum: 100; value <=> root.gap-edges; edited(v) => { self.value = Math.clamp(v, 0, 100); root.edited(); } }
+                            }
+                        }
+                        CheckBox {
+                            text: "Swap columns and rows on portrait monitors";
+                            checked <=> root.transpose-portrait;
+                            toggled => { root.edited(); }
+                        }
+                        GroupBox {
+                            title: "Monitors";
+                            VerticalBox {
+                                // The monitor's name on its own line, since names can be long.
+                                for m[i] in root.monitors: VerticalLayout {
+                                    Text { text: m.label; overflow: elide; }
+                                    HorizontalBox {
+                                        own := CheckBox {
+                                            text: "Own grid";
+                                            checked: m.custom;
+                                            toggled => { root.monitor-edited(i, self.checked, c.value, r.value); }
+                                        }
+                                        c := SpinBox {
+                                            enabled: own.checked;
+                                            minimum: 1;
+                                            maximum: 64;
+                                            value: m.cols;
+                                            edited(v) => { root.monitor-edited(i, own.checked, Math.clamp(v, 1, 64), r.value); }
+                                        }
+                                        r := SpinBox {
+                                            enabled: own.checked;
+                                            minimum: 1;
+                                            maximum: 64;
+                                            value: m.rows;
+                                            edited(v) => { root.monitor-edited(i, own.checked, c.value, Math.clamp(v, 1, 64)); }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                }
+            }
+
+            Tab {
+                title: "Overlay";
+                TabPage {
+                        HorizontalBox {
+                            Label { text: "Opacity"; }
+                            Slider { minimum: 0.1; maximum: 1.0; value <=> root.overlay-opacity; changed => { root.edited(); } }
+                            Text {
+                                text: Math.round(root.overlay-opacity * 100) + "%";
+                                vertical-alignment: center;
+                                min-width: 40px;
+                            }
+                        }
+                        CheckBox {
+                            text: "Blur the screen behind the grid";
+                            checked <=> root.blur;
+                            toggled => { root.edited(); }
+                        }
+                        ColorField { label: "Tint"; value <=> root.tint-color; edited => { root.edited(); } }
+                        ColorField { label: "Grid lines"; value <=> root.line-color; edited => { root.edited(); } }
+                        ColorField { label: "Start cell"; value <=> root.start-color; edited => { root.edited(); } }
+                        ColorField { label: "Target area"; value <=> root.target-color; edited => { root.edited(); } }
+                        HorizontalBox {
+                            padding: 0;
+                            alignment: start;
+                            Button { text: "Reset to defaults"; clicked => { root.reset-overlay(); } }
+                        }
+                }
+            }
+
+            Tab {
+                title: "Input";
+                TabPage {
+                        Text {
+                            text: "While dragging a window, press one of these to start grid mode. Click an input to change it.";
+                            wrap: word-wrap;
+                        }
+                        BindingGroup {
+                            title: "Resize";
+                            hint: "Hold to pick the first cell, release, then move to the last cell.";
+                            inputs: root.resize-inputs;
+                            busy: root.busy;
+                            capturing: root.capturing-command == "Resize" ? root.capturing-index : -1;
+                            capture(i) => { root.capture("Resize", i); }
+                            add => { root.add-binding("Resize"); }
+                            remove(i) => { root.remove-binding("Resize", i); }
+                        }
+                        BindingGroup {
+                            title: "Move";
+                            hint: "The window follows the cursor and fills the grid cells it mostly covers.";
+                            inputs: root.move-inputs;
+                            busy: root.busy;
+                            capturing: root.capturing-command == "Move" ? root.capturing-index : -1;
+                            capture(i) => { root.capture("Move", i); }
+                            add => { root.add-binding("Move"); }
+                            remove(i) => { root.remove-binding("Move", i); }
+                        }
+                        BindingGroup {
+                            title: "Cancel";
+                            hint: "Puts the window back where it was before the drag.";
+                            inputs: root.cancel-inputs;
+                            busy: root.busy;
+                            capturing: root.capturing-command == "Cancel" ? root.capturing-index : -1;
+                            capture(i) => { root.capture("Cancel", i); }
+                            add => { root.add-binding("Cancel"); }
+                            remove(i) => { root.remove-binding("Cancel", i); }
+                        }
+                        GroupBox {
+                            title: "Hotkeys";
+                            VerticalBox {
+                                Text { text: "These work any time, not only while dragging."; wrap: word-wrap; }
+                                HotkeyRow {
+                                    label: "Undo last snap";
+                                    value: root.hotkey-undo;
+                                    capturing: root.capturing-hotkey == "undo";
+                                    busy: root.busy;
+                                    capture => { root.capture-hotkey("undo"); }
+                                    clear => { root.clear-hotkey("undo"); }
+                                }
+                                HotkeyRow {
+                                    label: "Save window positions";
+                                    value: root.hotkey-save;
+                                    capturing: root.capturing-hotkey == "save";
+                                    busy: root.busy;
+                                    capture => { root.capture-hotkey("save"); }
+                                    clear => { root.clear-hotkey("save"); }
+                                }
+                                HotkeyRow {
+                                    label: "Restore window positions";
+                                    value: root.hotkey-restore;
+                                    capturing: root.capturing-hotkey == "restore";
+                                    busy: root.busy;
+                                    capture => { root.capture-hotkey("restore"); }
+                                    clear => { root.clear-hotkey("restore"); }
+                                }
+                            }
+                        }
+                }
+            }
+
+            Tab {
+                title: "General";
+                TabPage {
+                        HorizontalBox {
+                            Label { text: "Appearance"; }
+                            ComboBox {
+                                model: ["System", "Light", "Dark"];
+                                current-value <=> root.appearance;
+                                selected => { root.edited(); }
+                            }
+                        }
+                        CheckBox {
+                            text: "Show the splash screen when Grid starts";
+                            checked <=> root.splash;
+                            toggled => { root.edited(); }
+                        }
+                        if root.install-available: GroupBox {
+                            title: "Installation";
+                            VerticalBox {
+                                Text { text: root.install-status; wrap: word-wrap; }
+                                CheckBox {
+                                    text: "Start Grid when Windows starts";
+                                    enabled: root.installed;
+                                    checked <=> root.autostart;
+                                    toggled => { root.autostart-changed(self.checked); }
+                                }
+                                if !root.installed: Text {
+                                    text: "Only for installed copies. Install Grid to start it with Windows.";
+                                    wrap: word-wrap;
+                                    font-size: 12px;
+                                    opacity: 0.75;
+                                }
+                                HorizontalBox {
+                                    padding: 0;
+                                    alignment: start;
+                                    Button {
+                                        text: root.installed ? "Uninstall Grid…" : "Install Grid…";
+                                        clicked => {
+                                            if root.installed {
+                                                root.uninstall-clicked();
+                                            } else {
+                                                root.install-clicked();
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if root.admin-available: GroupBox {
+                            title: "Administrator rights";
+                            VerticalBox {
+                                Text {
+                                    text: root.admin-state == 2
+                                        ? "Grid is running as administrator, so it can move every window."
+                                        : root.admin-state == 1
+                                        ? "To move windows of apps run as administrator (e.g. Task Manager), Grid must be too."
+                                        : "Grid isn't running.";
+                                    wrap: word-wrap;
+                                }
+                                CheckBox {
+                                    text: "Never prompt to start Grid as administrator";
+                                    checked <=> root.never-ask-admin;
+                                    toggled => { root.edited(); }
+                                }
+                                HorizontalBox {
+                                    padding: 0;
+                                    alignment: start;
+                                    Button {
+                                        text: "Restart Grid as administrator";
+                                        enabled: root.admin-state == 1;
+                                        clicked => { root.restart-as-admin(); }
+                                    }
+                                }
+                            }
+                        }
+                        GroupBox {
+                            title: "Updates";
+                            VerticalBox {
+                                CheckBox {
+                                    text: "Check for updates when Grid starts";
+                                    checked <=> root.update-at-startup;
+                                    toggled => { root.edited(); }
+                                }
+                                CheckBox {
+                                    text: "Install updates without asking";
+                                    enabled: root.update-at-startup;
+                                    checked <=> root.update-silently;
+                                    toggled => { root.edited(); }
+                                }
+                            }
+                        }
+                        if root.os-available: GroupBox {
+                            title: "Recommended Windows settings";
+                            VerticalBox {
+                                Text {
+                                    text: "These change Windows itself, right away (Save isn't needed).";
+                                    wrap: word-wrap;
+                                }
+                                CheckBox {
+                                    text: "Show window contents while dragging (recommended: on)";
+                                    checked <=> root.drag-full-windows;
+                                    toggled => { root.os-setting-changed("drag", self.checked); }
+                                }
+                            }
+                        }
+                }
+            }
+
+            Tab {
+                title: "About";
+                ScrollView {
+                    // Centered, and kept at its natural size as the window grows.
+                    HorizontalLayout {
+                        alignment: center;
+                        VerticalBox {
+                            alignment: center;
+                            // A fixed-size image sits at the left of a wider column unless centered.
+                            HorizontalLayout {
+                                alignment: center;
+                                Image { source: root.logo; width: 128px; height: 128px; }
+                            }
+                            Text { text: "Grid " + root.version; font-size: 20px; font-weight: 600; horizontal-alignment: center; }
+                            Text { text: "A lightweight grid window manager."; horizontal-alignment: center; }
+                            Text { text: "github.com/matthewmgraf/Grid"; horizontal-alignment: center; }
+                            HorizontalLayout {
+                                alignment: center;
+                                // Its natural size is larger than the text above; this matches it.
+                                AboutSlint { width: 180px; }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        HorizontalBox {
+            padding: 0;
+            // Bottom left, beside the buttons, with room for two lines (always reserved, so the
+            // page doesn't jump when a message appears). Messages are kept short enough to fit
+            // at the minimum window width. (Not `overflow: elide`: with wrapping, Slint 1.18
+            // then draws nothing.)
+            Text {
+                text: root.status;
+                wrap: word-wrap;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+                height: 40px;
+            }
+            Button {
+                text: "Close";
+                clicked => { root.close-requested(); }
+            }
+            Button {
+                text: "Save";
+                primary: true;
+                enabled: root.dirty;
+                clicked => { root.save(); }
+            }
+        }
+    }
+
+    // Confirmation when a captured input is already bound to the other action.
+    if root.conflict-message != "": Rectangle {
+        width: 100%;
+        height: 100%;
+        background: #00000080;
+        TouchArea { }  // blocks clicks to the window behind
+        dialog := Rectangle {
+            width: min(440px, parent.width - 40px);
+            height: dialog-layout.preferred-height;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            background: Palette.background;
+            border-color: Palette.border;
+            border-width: 1px;
+            border-radius: 8px;
+            dialog-layout := VerticalBox {
+                Text { text: root.conflict-message; wrap: word-wrap; }
+                HorizontalBox {
+                    padding: 0;
+                    alignment: end;
+                    Button {
+                        text: "Cancel";
+                        clicked => { root.resolve-conflict(false); }
+                    }
+                    Button {
+                        text: "Move";
+                        primary: true;
+                        clicked => { root.resolve-conflict(true); }
+                    }
+                }
+            }
+        }
+    }
+}

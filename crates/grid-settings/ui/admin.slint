@@ -1,0 +1,53 @@
+import { Button, CheckBox, HorizontalBox, Palette, VerticalBox } from "std-widgets.slint";
+
+/// Asked when the user drags a window Grid can't move because that app runs as administrator.
+export component AdminPrompt inherits Window {
+    // Same as ADMIN_PROMPT_TITLE in grid-windows.
+    title: "Grid - Administrator rights";
+    width: 440px;
+    // Grid runs in the background, so Windows may not bring this window to the front by itself.
+    always-on-top: true;
+    in property <string> appearance: "System";
+    in-out property <bool> dont-ask;
+    callback answered(bool);
+
+    init => {
+        Palette.color-scheme = root.appearance == "Dark" ? ColorScheme.dark
+            : root.appearance == "Light" ? ColorScheme.light : ColorScheme.unknown;
+    }
+
+    VerticalBox {
+        Text {
+            text: "This window can't be adjusted because it was run as an administrator. Would you like to restart Grid with administrator rights?";
+            wrap: word-wrap;
+            // A fixed width, so Slint sizes the window for the wrapped lines (it otherwise works
+            // out the height for one long line and the buttons get cut off).
+            width: 410px;
+        }
+        CheckBox {
+            text: "Don't ask again until Grid restarts";
+            checked <=> root.dont-ask;
+        }
+        Text {
+            text: "To turn this question off for good, see Settings → General.";
+            wrap: word-wrap;
+            width: 410px;
+            font-size: 12px;
+            opacity: 0.75;
+        }
+        // Same buttons as Close and Save in the settings window.
+        HorizontalBox {
+            padding: 0;
+            alignment: end;
+            Button {
+                text: "No";
+                clicked => { root.answered(false); }
+            }
+            Button {
+                text: "Yes";
+                primary: true;
+                clicked => { root.answered(true); }
+            }
+        }
+    }
+}

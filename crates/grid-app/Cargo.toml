@@ -1,0 +1,21 @@
+[package]
+name = "grid-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "grid"
+path = "src/main.rs"
+
+[dependencies]
+grid-core = { path = "../grid-core" }
+grid-settings = { path = "../grid-settings" }
+
+[target.'cfg(windows)'.dependencies]
+grid-windows = { path = "../grid-windows" }
+
+[build-dependencies]
+grid-core = { path = "../grid-core" }
+# Compiles the .rc file that embeds the exe icon (build time only; nothing added at runtime).
+embed-resource = "3.0.12"

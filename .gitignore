@@ -1,0 +1,5 @@
+/target
+*.log
+
+# Private notes for the AI assistant; kept on this PC only.
+CLAUDE.local.md

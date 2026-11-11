@@ -1,0 +1,137 @@
+import { Button, CheckBox, GroupBox, HorizontalBox, Palette, VerticalBox } from "std-widgets.slint";
+
+/// One way to set up Grid: a button and what it does.
+component Choice inherits HorizontalBox {
+    in property <string> label;
+    in property <string> detail;
+    in property <bool> recommended;
+    callback chosen();
+    padding: 0;
+    Button {
+        text: root.label;
+        primary: root.recommended;
+        width: 230px;
+        clicked => { root.chosen(); }
+    }
+    Text {
+        text: root.detail;
+        wrap: word-wrap;
+        vertical-alignment: center;
+        horizontal-stretch: 1;
+    }
+}
+
+/// Asked before uninstalling (from Windows Settings → Apps, or Grid's settings window).
+export component UninstallWindow inherits Window {
+    // Same as UNINSTALL_TITLE in grid-windows.
+    title: "Uninstall Grid";
+    width: 440px;
+    always-on-top: true;
+    in property <string> appearance: "System";
+    in-out property <bool> delete-settings;
+    callback answered(bool);
+
+    init => {
+        Palette.color-scheme = root.appearance == "Dark" ? ColorScheme.dark
+            : root.appearance == "Light" ? ColorScheme.light : ColorScheme.unknown;
+    }
+
+    VerticalBox {
+        Text {
+            text: "Remove Grid from this PC?";
+            wrap: word-wrap;
+            // Fixed, so the window is sized for the wrapped text (see admin.slint).
+            width: 410px;
+        }
+        CheckBox {
+            text: "Also delete my settings and saved window positions";
+            checked <=> root.delete-settings;
+        }
+        HorizontalBox {
+            padding: 0;
+            alignment: end;
+            Button {
+                text: "Cancel";
+                clicked => { root.answered(false); }
+            }
+            Button {
+                text: "Uninstall";
+                primary: true;
+                clicked => { root.answered(true); }
+            }
+        }
+    }
+}
+
+/// Shown the first time a downloaded grid.exe runs (and from Settings, "Install Grid").
+export component SetupWindow inherits Window {
+    // Same as SETUP_TITLE in grid-windows.
+    title: "Grid Setup";
+    width: 560px;
+    always-on-top: true;
+    in property <image> logo;
+    in property <string> appearance: "System";
+    /// Non-empty when Grid is already installed on this PC: says so above the choices.
+    in property <string> existing;
+    in-out property <bool> autostart: true;
+    /// "all", "user" or "portable".
+    callback chosen(string);
+    callback cancelled();
+
+    init => {
+        Palette.color-scheme = root.appearance == "Dark" ? ColorScheme.dark
+            : root.appearance == "Light" ? ColorScheme.light : ColorScheme.unknown;
+    }
+
+    VerticalBox {
+        HorizontalBox {
+            padding: 0;
+            Image { source: root.logo; width: 48px; height: 48px; }
+            VerticalLayout {
+                alignment: center;
+                Text { text: "Welcome to Grid"; font-size: 20px; font-weight: 600; }
+                Text { text: "Install Grid on this PC, or run it from this folder."; }
+            }
+        }
+        if root.existing != "": Text {
+            text: root.existing;
+            wrap: word-wrap;
+            width: 530px;
+        }
+        Choice {
+            label: "Install for all users";
+            detail: "Recommended, for the best compatibility. Windows will ask for administrator rights.";
+            recommended: true;
+            chosen => { root.chosen("all"); }
+        }
+        Choice {
+            label: "Install just for me";
+            detail: "No administrator rights needed.";
+            chosen => { root.chosen("user"); }
+        }
+        Choice {
+            label: "Run without installing";
+            detail: "Portable: Grid and its settings stay in this folder. It won't start with Windows.";
+            chosen => { root.chosen("portable"); }
+        }
+        CheckBox {
+            text: "Start Grid when Windows starts";
+            checked <=> root.autostart;
+        }
+        Text {
+            text: "Only when installed: Grid can't start with Windows when run without installing.";
+            wrap: word-wrap;
+            width: 530px;
+            font-size: 12px;
+            opacity: 0.75;
+        }
+        HorizontalBox {
+            padding: 0;
+            alignment: end;
+            Button {
+                text: "Cancel";
+                clicked => { root.cancelled(); }
+            }
+        }
+    }
+}

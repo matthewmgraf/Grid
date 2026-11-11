@@ -1,0 +1,19 @@
+[package]
+name = "grid-settings"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+grid-core = { path = "../grid-core" }
+# Software renderer: ~34 MB working set vs 129+ MB for the GPU renderers (measured).
+slint = { version = "1.18.1", default-features = false, features = [
+    "std",
+    "compat-1-2",
+    "backend-winit",
+    "renderer-software",
+    "accessibility",
+] }
+
+[build-dependencies]
+slint-build = "1.18.1"
