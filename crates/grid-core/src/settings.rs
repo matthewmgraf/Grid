@@ -51,7 +51,7 @@ impl Default for Updates {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Gaps {
-    /// Between neighbouring windows.
+    /// Between neighboring windows.
     pub between: u32,
     /// Between a window and the edge of the screen.
     pub edges: u32,
@@ -131,7 +131,7 @@ impl Default for Settings {
 impl Default for Overlay {
     fn default() -> Self {
         Self {
-            opacity: 0.1,
+            opacity: 0.5,
             blur: false,
             tint_color: Color::rgb(0x0F, 0x17, 0x2A),
             line_color: Color::rgb(0x60, 0xCD, 0xFF),

@@ -22,7 +22,7 @@ pub struct Monitor {
 }
 
 /// Starts waiting for the user to press a key or mouse button; the callback gets it (`None` if
-/// cancelled), possibly on another thread. Provided by the platform layer.
+/// canceled), possibly on another thread. Provided by the platform layer.
 pub type CaptureFn = fn(Box<dyn FnOnce(Option<Input>) + Send>);
 
 /// Like `CaptureFn`, for a key combination such as Ctrl+Alt+Z.
@@ -80,7 +80,14 @@ pub struct Platform {
     /// Lists the connected monitors. Checked again every few seconds, so plugging in a monitor
     /// shows it without reopening the window.
     pub monitors: Option<fn() -> Vec<Monitor>>,
+    /// Opens a web address in the user's browser (the About tab's links).
+    pub open_url: Option<fn(&str)>,
 }
+
+/// Grid's home page, shown on the About tab.
+pub const REPO_URL: &str = "https://github.com/matthewmgraf/Grid";
+/// Where people can support Grid with a donation (GitHub Sponsors).
+pub const SPONSOR_URL: &str = "https://github.com/sponsors/matthewmgraf";
 
 /// How often the monitor list is checked for changes.
 const MONITOR_POLL: std::time::Duration = std::time::Duration::from_millis(1500);
@@ -97,6 +104,7 @@ pub fn run(path: &Path, platform: Platform) -> Result<(), String> {
         os,
         window_shown,
         monitors: list_monitors,
+        open_url,
     } = platform;
     let monitors = list_monitors.map(|list| list()).unwrap_or_default();
     let (settings, warning) = Settings::load(path);
@@ -104,6 +112,14 @@ pub fn run(path: &Path, platform: Platform) -> Result<(), String> {
 
     ui.set_version(env!("CARGO_PKG_VERSION").into());
     ui.set_logo(logo_image(256));
+    ui.set_repo_url(REPO_URL.into());
+    ui.set_sponsor_url(SPONSOR_URL.into());
+    ui.set_links_available(open_url.is_some());
+    ui.on_open_url(move |url| {
+        if let Some(open) = open_url {
+            open(&url);
+        }
+    });
     ui.set_status(warning.unwrap_or_default().into());
     ui.set_appearance(appearance_name(settings.appearance).into());
     ui.set_cols(settings.grid.cols as i32);
@@ -653,7 +669,7 @@ pub fn ask_admin_restart(path: &Path, window_shown: Option<fn()>) -> Result<(boo
 }
 
 /// Shows the setup window: install for all users, for this user, or run portably. `existing` is
-/// shown above the choices (e.g. that Grid is already installed). `None` if cancelled.
+/// shown above the choices (e.g. that Grid is already installed). `None` if canceled.
 pub fn ask_setup(existing: Option<String>, window_shown: Option<fn()>) -> Result<Option<SetupChoice>, String> {
     let ui = SetupWindow::new().map_err(|e| e.to_string())?;
     ui.set_logo(logo_image(96));
@@ -671,7 +687,7 @@ pub fn ask_setup(existing: Option<String>, window_shown: Option<fn()>) -> Result
             let _ = slint::quit_event_loop();
         }
     });
-    ui.on_cancelled(|| {
+    ui.on_canceled(|| {
         let _ = slint::quit_event_loop();
     });
     if let Some(shown) = window_shown {
@@ -681,7 +697,7 @@ pub fn ask_setup(existing: Option<String>, window_shown: Option<fn()>) -> Result
     Ok(answer.get())
 }
 
-/// Asks before uninstalling. `Some(delete_settings)` to go ahead, `None` if cancelled.
+/// Asks before uninstalling. `Some(delete_settings)` to go ahead, `None` if canceled.
 pub fn ask_uninstall(path: &Path, window_shown: Option<fn()>) -> Result<Option<bool>, String> {
     let (settings, _) = Settings::load(path);
     let ui = UninstallWindow::new().map_err(|e| e.to_string())?;

@@ -38,15 +38,15 @@ Notes for AI assistants and contributors. Maintainers may keep extra private not
   - **Resize**: press → selects start cell, release → drag to end cell; window covers the span.
   - **Move**: on press the window snaps at once to the nearest whole cells (minimum one cell)
     and keeps that size. It then follows the cursor a cell at a time, always covering the cell
-    under the cursor at the same spot. It stays on screen but may straddle neighbouring monitors.
+    under the cursor at the same spot. It stays on screen but may straddle neighboring monitors.
   - Both update the window live. When grid mode starts, Grid ends the OS move loop with a
     synthetic left-button-up and places the window itself until the real button-up (swallowed).
   - **Cancel** (default Esc, rebindable on the Input tab) puts the window back.
 - Default bindings: Space → Resize, Left Ctrl → Move, Right mouse → Resize, Middle mouse → Move,
   Esc → Cancel. All rebindable.
-- Defaults: 8×8 grid, no gaps, 10% opacity, no blur, no hotkeys set, splash on.
+- Defaults: 8×8 grid, no gaps, 50% opacity, no blur, no hotkeys set, splash on.
 - N×M grid, per-monitor grids, grid transposes on portrait monitors.
-- Overlay with blur, opacity, target-area highlight and colours.
+- Overlay with blur, opacity, target-area highlight and colors.
 - Multi-monitor, including spanning a window across monitors.
 - Gaps between snapped windows (only the placed window is inset; the overlay is drawn as normal).
 - Save and restore window positions; undo last snap (up to 10).
@@ -147,4 +147,6 @@ Implementation notes:
 - The C runtime is statically linked (`.cargo/config.toml`), so the exe needs only Windows system
   DLLs. Check with `dumpbin /dependents` that no `VCRUNTIME140.dll` / `api-ms-win-crt-*` reappears.
 - Keep dependencies minimal; justify each new crate.
+- Use American English spelling everywhere: UI text, docs, comments, names and commit messages
+  (color, center, canceled, gray, neighbor, license).
 - Run `cargo test` and `cargo clippy` before committing.

@@ -79,7 +79,7 @@ fn ico_file() -> Vec<u8> {
     file
 }
 
-/// One icon image: a bitmap header (double height: colour + mask), bottom-up BGRA pixels with
+/// One icon image: a bitmap header (double height: color + mask), bottom-up BGRA pixels with
 /// straight alpha, then an all-zero mask (the alpha channel is used instead).
 fn ico_image(size: i32) -> Vec<u8> {
     let pixels = grid_core::logo::draw(size);

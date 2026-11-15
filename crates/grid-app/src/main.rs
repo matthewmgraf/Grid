@@ -230,6 +230,7 @@ fn settings(path: &Path) -> Result<(), String> {
                 .map(|m| grid_settings::Monitor { id: m.id, label: m.label, bounds: m.bounds })
                 .collect()
         }),
+        open_url: Some(grid_windows::open_url),
     };
     #[cfg(not(windows))]
     let platform = grid_settings::Platform::default();
@@ -237,7 +238,7 @@ fn settings(path: &Path) -> Result<(), String> {
 }
 
 /// `--capture` mode: waits for one key or mouse button and prints its name (nothing if
-/// cancelled). The settings window runs this as a helper process; see `grid_windows::capture_input`.
+/// canceled). The settings window runs this as a helper process; see `grid_windows::capture_input`.
 #[cfg(windows)]
 fn capture() -> Result<(), String> {
     if let Some(input) = grid_windows::capture_input() {
@@ -301,7 +302,10 @@ fn run_helper<T: std::str::FromStr + 'static>(flag: &'static str, on_done: Box<d
 /// The engine runs this after the user drags a window Grid isn't allowed to move.
 #[cfg(windows)]
 fn admin_prompt(path: &Path) -> Result<(), String> {
-    let shown: fn() = || grid_windows::use_app_icon(grid_windows::ADMIN_PROMPT_TITLE);
+    let shown: fn() = || {
+        grid_windows::use_app_icon(grid_windows::ADMIN_PROMPT_TITLE);
+        grid_windows::center_window(grid_windows::ADMIN_PROMPT_TITLE);
+    };
     let (yes, mute) = grid_settings::ask_admin_restart(path, Some(shown))?;
     if yes {
         println!("yes");

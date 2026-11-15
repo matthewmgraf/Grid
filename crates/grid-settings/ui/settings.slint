@@ -77,6 +77,24 @@ component TabPage inherits ScrollView {
     }
 }
 
+/// Text that opens a web page when clicked (plain text when `enabled` is false).
+component Link inherits Rectangle {
+    in property <string> text;
+    in property <bool> enabled: true;
+    callback clicked();
+    min-width: label.preferred-width;
+    min-height: label.preferred-height;
+    label := Text {
+        text: root.text;
+        color: root.enabled ? Palette.accent-background : Palette.foreground;
+        horizontal-alignment: center;
+    }
+    if root.enabled: TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
 /// One global hotkey: its name, the current key combination, and buttons to change or clear it.
 component HotkeyRow inherits HorizontalBox {
     in property <string> label;
@@ -111,6 +129,11 @@ export component SettingsWindow inherits Window {
 
     in property <string> version;
     in property <image> logo;
+    /// The About tab's links: Grid's page and GitHub Sponsors. Plain text if they can't be opened.
+    in property <string> repo-url;
+    in property <string> sponsor-url;
+    in property <bool> links-available;
+    callback open-url(string);
     /// Message at the bottom left; cleared when switching tabs.
     in-out property <string> status;
     /// True when the form differs from the saved settings; enables Save.
@@ -120,7 +143,7 @@ export component SettingsWindow inherits Window {
     in-out property <int> rows: 8;
     in-out property <bool> transpose-portrait: true;
     in-out property <[MonitorRow]> monitors;
-    in-out property <float> overlay-opacity: 0.1;
+    in-out property <float> overlay-opacity: 0.5;
     in-out property <string> line-color;
     in-out property <string> start-color;
     in-out property <string> target-color;
@@ -180,7 +203,7 @@ export component SettingsWindow inherits Window {
     callback close-requested();
     callback capture-hotkey(string);
     callback clear-hotkey(string);
-    /// Puts the overlay colours and opacity back to the defaults.
+    /// Puts the overlay colors and opacity back to the defaults.
     callback reset-overlay();
     /// A Windows setting was toggled: (name, new value). Only "drag" for now.
     callback os-setting-changed(string, bool);
@@ -481,7 +504,27 @@ export component SettingsWindow inherits Window {
                             }
                             Text { text: "Grid " + root.version; font-size: 20px; font-weight: 600; horizontal-alignment: center; }
                             Text { text: "A lightweight grid window manager."; horizontal-alignment: center; }
-                            Text { text: "github.com/matthewmgraf/Grid"; horizontal-alignment: center; }
+                            HorizontalLayout {
+                                alignment: center;
+                                Link {
+                                    text: "github.com/matthewmgraf/Grid";
+                                    enabled: root.links-available;
+                                    clicked => { root.open-url(root.repo-url); }
+                                }
+                            }
+                            if root.links-available: HorizontalLayout {
+                                alignment: center;
+                                Button {
+                                    text: "♥ Support Grid";
+                                    clicked => { root.open-url(root.sponsor-url); }
+                                }
+                            }
+                            if root.links-available: Text {
+                                text: "Grid is free. Donations through GitHub Sponsors help keep it going.";
+                                horizontal-alignment: center;
+                                font-size: 12px;
+                                opacity: 0.75;
+                            }
                             HorizontalLayout {
                                 alignment: center;
                                 // Its natural size is larger than the text above; this matches it.

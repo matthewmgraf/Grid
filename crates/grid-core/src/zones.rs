@@ -85,13 +85,13 @@ pub fn area_for(areas: &[Rect], r: Rect) -> Rect {
 }
 
 /// The bounding box of every area in `areas` that `r` overlaps, so a window can straddle
-/// neighbouring monitors; `None` if it overlaps none.
+/// neighboring monitors; `None` if it overlaps none.
 pub fn reach(areas: &[Rect], r: Rect) -> Option<Rect> {
     areas.iter().filter(|a| a.overlap_area(&r) > 0).copied().reduce(|acc, a| acc.union(&a))
 }
 
 /// `target` shrunk to leave gaps: `edges` pixels where it touches the edge of a monitor's work
-/// area, and half of `between` elsewhere, so two neighbouring windows end up `between` apart.
+/// area, and half of `between` elsewhere, so two neighboring windows end up `between` apart.
 /// Never shrinks below 1×1.
 pub fn apply_gaps(target: Rect, areas: &[Rect], between: i32, edges: i32) -> Rect {
     if between <= 0 && edges <= 0 {
@@ -201,9 +201,9 @@ mod tests {
     #[test]
     fn gaps_use_edge_gap_at_screen_edges_and_half_gap_between() {
         let areas = [Rect::new(0, 0, 800, 800)];
-        // Left half: screen edges on the left, top and bottom; a neighbour on the right.
+        // Left half: screen edges on the left, top and bottom; a neighbor on the right.
         assert_eq!(apply_gaps(Rect::new(0, 0, 400, 800), &areas, 10, 4), Rect::new(4, 4, 391, 792));
-        // Right half: neighbour on the left.
+        // Right half: neighbor on the left.
         assert_eq!(apply_gaps(Rect::new(400, 0, 400, 800), &areas, 10, 4), Rect::new(405, 4, 391, 792));
         // No gaps: unchanged.
         assert_eq!(apply_gaps(Rect::new(100, 100, 200, 200), &areas, 0, 0), Rect::new(100, 100, 200, 200));

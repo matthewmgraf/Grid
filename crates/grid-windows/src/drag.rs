@@ -46,7 +46,7 @@ pub(crate) struct Drag {
     /// Bound inputs currently held down. Used to ignore key auto-repeat and to only swallow
     /// releases whose press Grid also swallowed.
     held: Vec<Input>,
-    cancelled: bool,
+    canceled: bool,
     hooks: [HHOOK; 2],
     /// Window frame when the drag started, restored on Cancel.
     original: Rect,
@@ -159,7 +159,7 @@ fn drag_start(hwnd: HWND) {
         hwnd,
         session,
         held: Vec::new(),
-        cancelled: false,
+        canceled: false,
         hooks: [null_mut(); 2],
         original,
         taken_over: false,
@@ -215,7 +215,7 @@ fn drag_end(hwnd: HWND) {
         return;
     }
     let Some(mut drag) = finish_drag() else { return };
-    if drag.hwnd != hwnd || drag.cancelled {
+    if drag.hwnd != hwnd || drag.canceled {
         return;
     }
     drag.session.set_window(window::frame_rect(hwnd).unwrap_or_default());
@@ -256,9 +256,9 @@ pub(crate) fn send_escape() {
 }
 
 /// Finishes a taken-over drag: the window gets its final place, or goes back on Cancel.
-pub(crate) fn drop_window(cancelled: bool) {
+pub(crate) fn drop_window(canceled: bool) {
     let Some(drag) = finish_drag() else { return };
-    if cancelled || drag.cancelled {
+    if canceled || drag.canceled {
         window::move_to(drag.hwnd, drag.original);
     } else if let Some(target) = drag.session.target() {
         finish_snap(&drag, target);
@@ -435,7 +435,7 @@ fn handle_input(input: Input, down: bool) -> bool {
             return Some(true); // auto-repeat
         }
         if command == Command::Cancel {
-            drag.cancelled = true;
+            drag.canceled = true;
             drag.session.cancel();
             let message = if drag.taken_over {
                 WM_APP_CANCEL
@@ -450,7 +450,7 @@ fn handle_input(input: Input, down: bool) -> bool {
             return Some(true);
         }
         drag.held.push(input);
-        drag.cancelled = false;
+        drag.canceled = false;
         drag.session.press(command);
         if !drag.taken_over {
             drag.taken_over = true;

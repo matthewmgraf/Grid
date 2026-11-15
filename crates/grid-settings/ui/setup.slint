@@ -76,7 +76,7 @@ export component SetupWindow inherits Window {
     in-out property <bool> autostart: true;
     /// "all", "user" or "portable".
     callback chosen(string);
-    callback cancelled();
+    callback canceled();
 
     init => {
         Palette.color-scheme = root.appearance == "Dark" ? ColorScheme.dark
@@ -130,7 +130,7 @@ export component SetupWindow inherits Window {
             alignment: end;
             Button {
                 text: "Cancel";
-                clicked => { root.cancelled(); }
+                clicked => { root.canceled(); }
             }
         }
     }

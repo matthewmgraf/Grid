@@ -37,7 +37,7 @@ thread_local! {
     static DC: Cell<HDC> = const { Cell::new(null_mut()) };
 }
 
-/// Shows the splash screen centred on the primary monitor. It fades out by itself.
+/// Shows the splash screen centered on the primary monitor. It fades out by itself.
 pub fn show(appearance: Appearance) {
     unsafe {
         let instance = GetModuleHandleW(null());
@@ -107,7 +107,7 @@ fn draw(w: i32, h: i32, scale: f32, dark: bool) -> Option<HDC> {
             }
         }
 
-        // Logo, centred near the top.
+        // Logo, centered near the top.
         let size = (56.0 * scale) as i32;
         let (lx, ly) = ((w - size) / 2, (28.0 * scale) as i32);
         for (i, &p) in logo::draw(size).iter().enumerate() {

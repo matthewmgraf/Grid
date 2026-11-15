@@ -418,7 +418,7 @@ fn over(src: u32, dst: u32) -> u32 {
     mix(24) | mix(16) | mix(8) | mix(0)
 }
 
-/// Signed distance from pixel centre (`x`, `y`) to a rounded rectangle; negative inside.
+/// Signed distance from pixel center (`x`, `y`) to a rounded rectangle; negative inside.
 fn rounded_distance(r: Rect, radius: f32, x: i32, y: i32) -> f32 {
     let (cx, cy) = (r.x as f32 + r.w as f32 / 2.0, r.y as f32 + r.h as f32 / 2.0);
     let radius = radius.min(r.w as f32 / 2.0).min(r.h as f32 / 2.0);

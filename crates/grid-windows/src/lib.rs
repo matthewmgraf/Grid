@@ -61,7 +61,7 @@ pub use capture::{PARENT_ENV as CAPTURE_PARENT_ENV, capture_hotkey, capture_inpu
 pub use elevation::RESTARTED;
 pub use monitors::Monitor;
 pub use os_settings::{drag_full_windows, set_drag_full_windows};
-pub use ui::{ask_yes_no, enforce_min_size, monitors, show_message, use_app_icon};
+pub use ui::{ask_yes_no, center_window, enforce_min_size, monitors, open_url, show_message, use_app_icon};
 
 /// Title of the settings window; used to find and focus it instead of opening a second one.
 pub const SETTINGS_TITLE: &str = "Grid Settings";
@@ -303,7 +303,7 @@ fn describe_busy(what: u32, wparam: usize) -> String {
         WM_APP_TRAY => "the tray icon (menu or click)",
         WM_APP_TAKEOVER => "starting grid mode",
         WM_APP_DROP => "placing the window at the end of a drag",
-        WM_APP_CANCEL => "cancelling a drag",
+        WM_APP_CANCEL => "canceling a drag",
         WM_APP_ELEVATE => "restarting as administrator",
         WM_APP_ESCAPE => "sending Esc",
         WM_APP_RESTORED => "reporting restored window positions",

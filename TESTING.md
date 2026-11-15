@@ -63,8 +63,8 @@ Tick each box when the result matches. Note anything odd with the app you used.
 ## 5. Administrator windows
 
 - [ ] With Grid not elevated, drag Task Manager and press Space: nothing moves. When you let go,
-      a popup asks to restart Grid as administrator. Its text, "Don't ask again until Grid
-      restarts" and No/Yes fit.
+      a popup asks to restart Grid as administrator, centered on the monitor with the mouse
+      pointer. Its text, "Don't ask again until Grid restarts" and No/Yes fit.
 - [ ] No closes it. Dragging Task Manager again asks again (never two popups at once).
 - [ ] Tick "Don't ask again until Grid restarts", No: further drags don't ask. Exit Grid and
       start it again: it asks again.
@@ -73,7 +73,7 @@ Tick each box when the result matches. Note anything odd with the app you used.
       Untick and Save: it asks again.
 - [ ] Settings → General → Administrator rights: "Restart Grid as administrator" restarts it
       (after Windows' prompt) while Settings stays open; within a couple of seconds the group
-      says Grid is running as administrator and the button is greyed out.
+      says Grid is running as administrator and the button is grayed out.
 - [ ] Restart Grid, drag Task Manager, choose Yes and accept Windows' prompt: the splash shows,
       the tray icon comes back, and Task Manager now snaps.
 - [ ] While elevated: Settings opens from the tray, and Save still updates the running Grid.
@@ -81,16 +81,18 @@ Tick each box when the result matches. Note anything odd with the app you used.
 ## 6. Settings window
 
 - [ ] Opens in your light/dark mode. Appearance Light / Dark / System switches it right away.
-- [ ] Save is greyed out until you change something, and greyed again if you change it back.
+- [ ] Save is grayed out until you change something, and grayed again if you change it back.
 - [ ] Shrinking the window stops at its minimum size; every tab scrolls so Close and Save stay
       visible. Snapping the Settings window into a small cell also can't shrink it below that.
 - [ ] Close with unsaved changes discards them (reopen to check).
 - [ ] About tab: logo, version, GitHub link and Slint badge, centered, not stretching.
+- [ ] The GitHub link opens Grid's page in your browser; "♥ Support Grid" opens the GitHub
+      Sponsors page.
 
 ### Grid tab
 - [ ] Change columns/rows (e.g. 4 × 3), Save, drag: the new grid shows. No restart needed.
 - [ ] Gaps: set Between windows 20 and At screen edges 10, Save. Snapped windows leave a 20 px
-      gap between neighbours and 10 px at screen edges (scaled with display scaling). The grid
+      gap between neighbors and 10 px at screen edges (scaled with display scaling). The grid
       cells line up with where windows land.
 - [ ] Portrait monitor (if you have one): with "Swap columns and rows" on, a 4 × 2 grid shows as
       2 × 4 there.
@@ -99,9 +101,9 @@ Tick each box when the result matches. Note anything odd with the app you used.
 - [ ] Opacity slider changes how dark the tint is (Save, then drag).
 - [ ] Blur on: the screen behind the grid is blurred and cells look frosted. Blur off: plain
       tint with cell outlines.
-- [ ] Each colour (Tint, Grid lines, Start cell, Target area) changes the overlay. A bad value
+- [ ] Each color (Tint, Grid lines, Start cell, Target area) changes the overlay. A bad value
       such as `#12` makes Save show an error instead of saving.
-- [ ] Reset to defaults puts the colours and opacity back.
+- [ ] Reset to defaults puts the colors and opacity (50%) back.
 
 ### Input tab
 - [ ] Click an input, press a key (e.g. Q): it becomes Q. A left click elsewhere cancels and
@@ -123,7 +125,7 @@ Tick each box when the result matches. Note anything odd with the app you used.
 
 - [ ] Set Undo to e.g. Ctrl+Alt+Z, Save. Snap a window, press the hotkey: it goes back to where
       it was before the snap. Repeated presses step back through earlier snaps (up to 10).
-- [ ] Tray → Undo last snap does the same, and is greyed out when there is nothing to undo.
+- [ ] Tray → Undo last snap does the same, and is grayed out when there is nothing to undo.
 - [ ] Set Save positions and Restore positions hotkeys, Save, and try them (see section 8).
 - [ ] Giving a second action the same combination moves it there (the first is cleared).
 - [ ] While waiting for a combination, the bottom-left message explains what to press. After
@@ -146,7 +148,7 @@ Tick each box when the result matches. Note anything odd with the app you used.
 - [ ] Overlapping windows come back stacked in the order they were in when saved (the front one
       in front and active). Also after Win+D (show desktop), then Restore.
 - [ ] Close an app and reopen it (same document if possible), Restore: it goes back too.
-- [ ] With nothing saved yet, tray → Restore is greyed out and the Restore hotkey says nothing
+- [ ] With nothing saved yet, tray → Restore is grayed out and the Restore hotkey says nothing
       has been saved. (Rename `positions.json` next to `grid.exe` to try, then rename it back.)
 
 ## 9. Multiple monitors (still on the "test later" list)
@@ -188,7 +190,7 @@ folder in Downloads) and run it from there.
       to the exe. Running it again goes straight to Grid, no setup window.
 - [ ] The portable copy doesn't start with Windows, even with "Start Grid when Windows starts"
       ticked on that screen (the screen says it's only for installs). In Settings → General the
-      checkbox is greyed out with a note to install. An old start-with-Windows entry for a
+      checkbox is grayed out with a note to install. An old start-with-Windows entry for a
       portable copy is removed when it starts (and `grid.log` says so).
 - [ ] Delete that `grid.json`, run again, choose **Install just for me**: no administrator
       prompt. A message says Grid is installed, and Grid is running from

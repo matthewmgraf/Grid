@@ -53,6 +53,40 @@ pub fn use_app_icon(title: &str) {
     }
 }
 
+/// Centers the top-level window titled `title` (in this process) on the monitor under the mouse
+/// pointer, within its work area (the screen minus the taskbar).
+pub fn center_window(title: &str) {
+    use windows_sys::Win32::Foundation::{POINT, RECT};
+    use windows_sys::Win32::Graphics::Gdi::{GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromPoint};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetCursorPos, GetWindowRect, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER, SetWindowPos,
+    };
+    unsafe {
+        let hwnd = FindWindowW(null(), wide(title).as_ptr());
+        if hwnd.is_null() {
+            return;
+        }
+        let mut cursor = POINT { x: 0, y: 0 };
+        GetCursorPos(&mut cursor);
+        let mut info: MONITORINFO = std::mem::zeroed();
+        info.cbSize = size_of::<MONITORINFO>() as u32;
+        if GetMonitorInfoW(MonitorFromPoint(cursor, MONITOR_DEFAULTTONEAREST), &mut info) == 0 {
+            return;
+        }
+        let work = info.rcWork;
+        // Twice: moving to a monitor with different scaling resizes the window, so center it again
+        // at its new size.
+        for _ in 0..2 {
+            let mut r: RECT = std::mem::zeroed();
+            GetWindowRect(hwnd, &mut r);
+            let (w, h) = (r.right - r.left, r.bottom - r.top);
+            let x = work.left + ((work.right - work.left) - w) / 2;
+            let y = work.top + ((work.bottom - work.top) - h) / 2;
+            SetWindowPos(hwnd, null_mut(), x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        }
+    }
+}
+
 /// Minimum client size, in pixels at 100% scaling, for the window given to `enforce_min_size`.
 static MIN_SIZE: AtomicU32 = AtomicU32::new(0);
 
@@ -105,6 +139,17 @@ unsafe extern "system" fn min_size_proc(
         }
     }
     unsafe { DefSubclassProc(hwnd, msg, wparam, lparam) }
+}
+
+/// Opens a web page in the user's default browser. Only `https://` addresses, so this can't be
+/// used to start programs.
+pub fn open_url(url: &str) {
+    use windows_sys::Win32::UI::Shell::ShellExecuteW;
+    use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+    if !url.starts_with("https://") {
+        return;
+    }
+    unsafe { ShellExecuteW(null_mut(), wide("open").as_ptr(), wide(url).as_ptr(), null(), null(), SW_SHOWNORMAL) };
 }
 
 /// Connected monitors, with bounds in physical pixels.
