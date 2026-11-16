@@ -59,6 +59,10 @@ pub fn check(interactive: bool, silent: bool, engine: usize) {
 
 /// The latest release on GitHub, if it is newer than this build.
 fn newer_release() -> Result<Option<Release>, String> {
+    #[cfg(debug_assertions)]
+    if let Some(release) = test_release() {
+        return Ok(Some(release));
+    }
     let release = latest_release()?;
     Ok(is_newer(&release.version, VERSION).then_some(release))
 }
@@ -95,10 +99,7 @@ fn install_release(release: &Release) -> Result<PathBuf, String> {
 /// Downloads `release`, checks it, stages it next to `target` (in Grid's own folder, not a
 /// shared temporary one) and swaps it in.
 fn download_and_replace(release: &Release, target: &Path) -> Result<(), String> {
-    let (status, bytes) = get(&release.download_url, "application/octet-stream")?;
-    if status != 200 {
-        return Err(format!("the download failed (status {status})."));
-    }
+    let bytes = download(release)?;
     // A complete Windows program: the size GitHub listed, starting with the "MZ" exe header.
     if bytes.len() as u64 != release.size || !bytes.starts_with(b"MZ") {
         return Err("the download was incomplete or not a program.".into());
@@ -108,6 +109,31 @@ fn download_and_replace(release: &Release, target: &Path) -> Result<(), String> 
     let result = install::replace_exe(&staged, target);
     let _ = std::fs::remove_file(&staged);
     result
+}
+
+/// The release's `grid.exe`.
+fn download(release: &Release) -> Result<Vec<u8>, String> {
+    #[cfg(debug_assertions)]
+    if let Some(path) = release.download_url.strip_prefix(TEST_PREFIX) {
+        return std::fs::read(path).map_err(|e| format!("couldn't read {path}: {e}"));
+    }
+    let (status, bytes) = get(&release.download_url, "application/octet-stream")?;
+    if status != 200 {
+        return Err(format!("the download failed (status {status})."));
+    }
+    Ok(bytes)
+}
+
+/// Debug builds only: with `GRID_TEST_UPDATE` set to the path of a `grid.exe`, "Check for
+/// updates" offers that file as a new version, so updating can be tried without a release.
+#[cfg(debug_assertions)]
+const TEST_PREFIX: &str = "test-file:";
+
+#[cfg(debug_assertions)]
+fn test_release() -> Option<Release> {
+    let path = std::env::var("GRID_TEST_UPDATE").ok()?;
+    let size = std::fs::metadata(&path).ok()?.len();
+    Some(Release { version: "test".into(), download_url: format!("{TEST_PREFIX}{path}"), size, page_url: path })
 }
 
 /// `--apply-update <version>`, run as administrator for an all-users install: downloads the

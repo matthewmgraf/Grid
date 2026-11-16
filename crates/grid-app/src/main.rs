@@ -324,7 +324,12 @@ fn admin_prompt(_path: &Path) -> Result<(), String> {
 #[cfg(windows)]
 fn engine(path: &Path) -> Result<(), String> {
     let restarted = std::env::args().any(|a| a == grid_windows::RESTARTED);
-    grid_windows::install::remove_old_exe();
+    // Not straight after an update or install (`--restarted`): security software can read a
+    // program deleting the exe that started it as malware hiding its tracks. The next normal start
+    // tidies it up instead.
+    if !restarted {
+        grid_windows::install::remove_old_exe();
+    }
     if grid_windows::install::remove_portable_autostart() {
         grid_windows::log::write("Removed start with Windows for this portable copy (only installed copies can)");
     }

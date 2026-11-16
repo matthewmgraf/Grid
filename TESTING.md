@@ -218,6 +218,9 @@ folder in Downloads) and run it from there.
       published release was found on GitHub." (Also what a private repository gives.)
 - [ ] With a newer release published: it offers the new version with a link to its notes.
       Yes downloads it, replaces grid.exe and restarts Grid; About shows the new version.
+      grid.exe.old stays next to it until Grid's next normal start, which deletes it. No
+      antivirus alert at either step. (Without a release: a debug build started with
+      `GRID_TEST_UPDATE=<path to a grid.exe>` offers that file instead.)
 - [ ] With the latest version already running: "You have the latest version of Grid".
 - [ ] Settings → General → Updates: with "Check for updates when Grid starts" on, a newer
       release is offered right after Grid starts; with "Install updates without asking" on, it

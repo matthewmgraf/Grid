@@ -130,7 +130,8 @@ pub fn is_first_run() -> bool {
         && std::env::current_exe().ok().and_then(|e| e.parent().map(|d| !d.join("grid.json").exists())).unwrap_or(false)
 }
 
-/// Deletes an exe left over from replacing a running one (install over it, or an update).
+/// Deletes an exe left over from replacing a running one (install over it, or an update). Called
+/// on a normal start only, never by the copy an update or install just started (see `main.rs`).
 pub fn remove_old_exe() {
     if let Some(dir) = std::env::current_exe().ok().and_then(|e| e.parent().map(Path::to_path_buf)) {
         let _ = std::fs::remove_file(dir.join(OLD_EXE));

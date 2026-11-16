@@ -120,7 +120,10 @@ Cargo workspace:
   - Installing: Program Files or `%LOCALAPPDATA%\Programs\Grid`, Start menu shortcut via
     `IShellLinkW`, Uninstall registry entry, HKCU Run key for autostart. Running engines are
     asked to exit with the registered `Grid.Exit` message; a running exe is replaced by renaming
-    it to `grid.exe.old`.
+    it to `grid.exe.old`, which the next normal start deletes (never the `--restarted` copy:
+    SentinelOne flagged an update chain deleting its own old exe as malware hiding its tracks).
+  - Testing updates without a release: a debug build started with `GRID_TEST_UPDATE=<path to a
+    grid.exe>` offers that file as an update.
   - Updates: WinHTTP, GitHub latest release, asset `grid.exe`; see `RELEASING.md`.
   - Release builds have no console.
 - Later: `crates/grid-macos` with its own `run`, reusing `grid-core` and `grid-settings`.
