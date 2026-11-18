@@ -34,8 +34,9 @@ pub(crate) fn settings_changed() {
 }
 
 pub(crate) fn menu_state() -> tray::MenuState {
-    let (can_undo, path) = with_app(|app| (!app.history.is_empty(), app.positions_path.clone())).unwrap_or_default();
-    tray::MenuState { can_undo, can_restore: path.exists() }
+    let (can_undo, path, appearance) =
+        with_app(|app| (!app.history.is_empty(), app.positions_path.clone(), app.settings.appearance)).unwrap_or_default();
+    tray::MenuState { can_undo, can_restore: path.exists(), dark: crate::theme::is_dark(appearance) }
 }
 
 /// Puts the most recently snapped window (that is still open) back where it was.

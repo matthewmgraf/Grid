@@ -1,7 +1,6 @@
 //! Splash screen: a small card with the logo and version, shown briefly when Grid starts.
 
 use std::cell::Cell;
-use std::ffi::c_void;
 use std::mem::{size_of, zeroed};
 use std::ptr::{null, null_mut};
 
@@ -9,13 +8,10 @@ use grid_core::logo;
 use grid_core::settings::Appearance;
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, SIZE, WPARAM};
 use windows_sys::Win32::Graphics::Gdi::{
-    AC_SRC_ALPHA, AC_SRC_OVER, BLENDFUNCTION, CreateCompatibleDC, CreateFontW, DT_CENTER, DT_SINGLELINE, DT_VCENTER,
-    DeleteDC, DeleteObject, DrawTextW, FW_NORMAL, FW_SEMIBOLD, GetCurrentObject, GetMonitorInfoW, HDC,
-    MONITOR_DEFAULTTOPRIMARY, MONITORINFO, MonitorFromPoint, OBJ_BITMAP, SelectObject, SetBkMode, SetTextColor,
-    TRANSPARENT,
+    AC_SRC_ALPHA, AC_SRC_OVER, BLENDFUNCTION, CreateCompatibleDC, DeleteDC, DeleteObject, GetCurrentObject,
+    GetMonitorInfoW, HDC, MONITOR_DEFAULTTOPRIMARY, MONITORINFO, MonitorFromPoint, OBJ_BITMAP, SelectObject,
 };
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows_sys::Win32::System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_DWORD, RegGetValueW};
 use windows_sys::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, GetWindowRect, KillTimer, RegisterClassW, SW_SHOWNOACTIVATE, SetTimer, ShowWindow,
@@ -23,6 +19,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
 };
 
+use crate::theme::{self, Align, corner_cover, mix};
 use crate::{bitmap, wide};
 
 const CLASS: &str = "Grid.Splash";
@@ -30,6 +27,8 @@ const SHOW_MS: u32 = 1400;
 const FADE_STEP_MS: u32 = 16;
 const FADE_STEPS: u32 = 12;
 const TIMER: usize = 1;
+/// Corner radius at 100% scaling, as the settings window's cards.
+const RADIUS: f32 = 12.0;
 
 thread_local! {
     /// Fade-out progress: 0 while fully shown.
@@ -75,7 +74,7 @@ pub fn show(appearance: Appearance) {
         if hwnd.is_null() {
             return;
         }
-        let Some(dc) = draw(w, h, scale, is_dark(appearance)) else {
+        let Some(dc) = draw(w, h, scale, theme::is_dark(appearance)) else {
             DestroyWindow(hwnd);
             return;
         };
@@ -95,15 +94,23 @@ fn draw(w: i32, h: i32, scale: f32, dark: bool) -> Option<HDC> {
         SelectObject(dc, bitmap);
         let pixels = std::slice::from_raw_parts_mut(bits, (w * h) as usize);
 
-        // Card: opaque inside a rounded rectangle, anti-aliased at the corners.
-        let (bg, fg, sub) = if dark { (0x20_20_20, 0xFF_FF_FF, 0xA0_A0_A0) } else { (0xF3_F3_F3, 0x1A_1A_1A, 0x60_60_60) };
-        let radius = 8.0 * scale;
+        // Card: opaque inside a rounded rectangle with a fine border, anti-aliased at the corners.
+        // The glass look's colors: Grid's default tint (#0F172A) in dark mode, a pale blue-gray in
+        // light mode; the border is the settings window's card border.
+        let c = theme::colors(dark);
+        let (bg, fg, sub) = (c.tint, c.text, c.subtle);
+        let border = mix(bg, if dark { 0xFF_FF_FF } else { 0x0F_17_2A }, if dark { 0.14 } else { 0.12 });
+        let radius = RADIUS * scale;
+        let t = scale.round().max(1.0) as i32;
         for y in 0..h {
             for x in 0..w {
-                let cover = corner_cover(x, y, w, h, radius);
-                let a = (cover * 255.0 + 0.5) as u32;
-                let ch = |shift: u32| (((bg >> shift) & 0xFF) * a / 255) << shift;
-                pixels[(y * w + x) as usize] = a << 24 | ch(16) | ch(8) | ch(0);
+                let outer = corner_cover(x, y, w, h, radius);
+                let inner = corner_cover(x - t, y - t, w - 2 * t, h - 2 * t, radius - t as f32);
+                let ch = |shift: u32| {
+                    let v = ((bg >> shift) & 0xFF) as f32 * inner + ((border >> shift) & 0xFF) as f32 * (outer - inner);
+                    ((v + 0.5) as u32).min(255) << shift
+                };
+                pixels[(y * w + x) as usize] = ((outer * 255.0 + 0.5) as u32) << 24 | ch(16) | ch(8) | ch(0);
             }
         }
 
@@ -120,53 +127,14 @@ fn draw(w: i32, h: i32, scale: f32, dark: bool) -> Option<HDC> {
             }
         }
 
-        // Name and version. GDI clears the alpha of the pixels it writes; fixed up below.
-        SetBkMode(dc, TRANSPARENT as i32);
-        let text = |s: &str, size: f32, weight: u32, color: u32, top: f32, bottom: f32| {
-            let font = CreateFontW(
-                -(size * scale) as i32,
-                0,
-                0,
-                0,
-                weight as i32,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                5, // CLEARTYPE_QUALITY
-                0,
-                wide("Segoe UI").as_ptr(),
-            );
-            let old = SelectObject(dc, font);
-            // COLORREF is 0x00BBGGRR.
-            SetTextColor(dc, (color >> 16 & 0xFF) | (color & 0xFF00) | (color & 0xFF) << 16);
-            let mut r = RECT { left: 0, top: (top * scale) as i32, right: w, bottom: (bottom * scale) as i32 };
-            let s = wide(s);
-            DrawTextW(dc, s.as_ptr(), -1, &mut r, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-            SelectObject(dc, old);
-            DeleteObject(font);
+        // Name and version, centered.
+        let mut text = |s: &str, size: f32, weight: f32, color: u32, center_y: f32| {
+            theme::draw_text(pixels, w, s, w as f32 / 2.0, center_y * scale, Align::Center, size * scale, weight, color, 1.0);
         };
-        text("Grid", 22.0, FW_SEMIBOLD, fg, 92.0, 126.0);
-        text(&format!("Version {}", env!("CARGO_PKG_VERSION")), 12.0, FW_NORMAL, sub, 126.0, 150.0);
-        for (i, p) in pixels.iter_mut().enumerate() {
-            let (x, y) = (i as i32 % w, i as i32 / w);
-            if *p >> 24 == 0 && corner_cover(x, y, w, h, radius) >= 1.0 {
-                *p |= 0xFF00_0000;
-            }
-        }
+        text("Grid", 24.0, 700.0, fg, 109.0);
+        text(&format!("Version {}", env!("CARGO_PKG_VERSION")), 12.0, 400.0, sub, 138.0);
         Some(dc)
     }
-}
-
-/// How much of pixel (`x`, `y`) is inside a `w`×`h` rectangle with rounded corners.
-fn corner_cover(x: i32, y: i32, w: i32, h: i32, radius: f32) -> f32 {
-    let (px, py) = (x as f32 + 0.5, y as f32 + 0.5);
-    let cx = px.clamp(radius, w as f32 - radius);
-    let cy = py.clamp(radius, h as f32 - radius);
-    let d = ((px - cx).powi(2) + (py - cy).powi(2)).sqrt() - radius;
-    (0.5 - d).clamp(0.0, 1.0)
 }
 
 fn update(hwnd: HWND, alpha: u8) {
@@ -207,26 +175,3 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
     unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
 }
 
-/// Whether Grid's windows should be dark, following Windows' app mode for `System`.
-pub fn is_dark(appearance: Appearance) -> bool {
-    match appearance {
-        Appearance::Dark => true,
-        Appearance::Light => false,
-        Appearance::System => {
-            let mut value: u32 = 1;
-            let mut size = size_of::<u32>() as u32;
-            let ok = unsafe {
-                RegGetValueW(
-                    HKEY_CURRENT_USER,
-                    wide(r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize").as_ptr(),
-                    wide("AppsUseLightTheme").as_ptr(),
-                    RRF_RT_REG_DWORD,
-                    null_mut(),
-                    &mut value as *mut u32 as *mut c_void,
-                    &mut size,
-                )
-            } == 0;
-            ok && value == 0
-        }
-    }
-}

@@ -3,21 +3,18 @@
 use std::mem::{size_of, zeroed};
 use std::ptr::{null, null_mut};
 
-use windows_sys::Win32::Foundation::{HWND, POINT};
+use windows_sys::Win32::Foundation::HWND;
 use windows_sys::Win32::Graphics::Gdi::{CreateBitmap, DeleteObject};
 use windows_sys::Win32::UI::Shell::{
     NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_TIP, NIIF_NONE, NIIF_NOSOUND, NIM_ADD, NIM_DELETE, NIM_MODIFY, NOTIFYICONDATAW,
     Shell_NotifyIconW,
 };
-use windows_sys::Win32::UI::WindowsAndMessaging::{
-    AppendMenuW, CreateIconIndirect, CreatePopupMenu, DestroyMenu, GetCursorPos, GetSystemMetrics, HICON, ICONINFO,
-    MF_GRAYED, MF_SEPARATOR, MF_STRING, PostMessageW, SM_CXSMICON, SetForegroundWindow, TPM_NONOTIFY, TPM_RETURNCMD,
-    TPM_RIGHTBUTTON, TrackPopupMenu, WM_NULL,
-};
+use windows_sys::Win32::UI::WindowsAndMessaging::{CreateIconIndirect, GetSystemMetrics, HICON, ICONINFO, SM_CXSMICON};
 
 use grid_core::logo;
 
-use crate::{WM_APP_TRAY, bitmap, wide};
+use crate::menu::{self, Entry};
+use crate::{WM_APP_TRAY, bitmap};
 
 pub enum MenuChoice {
     Undo,
@@ -32,6 +29,8 @@ pub enum MenuChoice {
 pub struct MenuState {
     pub can_undo: bool,
     pub can_restore: bool,
+    /// Show the menu in dark mode.
+    pub dark: bool,
 }
 
 const ID_SETTINGS: usize = 1;
@@ -83,36 +82,26 @@ pub fn notify(hwnd: HWND, text: &str) {
 
 /// Shows the tray menu at the cursor and returns the chosen item.
 pub fn show_menu(hwnd: HWND, state: MenuState) -> Option<MenuChoice> {
-    let enabled = |on: bool| if on { MF_STRING } else { MF_STRING | MF_GRAYED };
-    unsafe {
-        let menu = CreatePopupMenu();
-        AppendMenuW(menu, enabled(state.can_undo), ID_UNDO, wide("Undo last snap").as_ptr());
-        AppendMenuW(menu, MF_SEPARATOR, 0, null());
-        AppendMenuW(menu, MF_STRING, ID_SAVE, wide("Save window positions").as_ptr());
-        AppendMenuW(menu, enabled(state.can_restore), ID_RESTORE, wide("Restore window positions").as_ptr());
-        AppendMenuW(menu, MF_SEPARATOR, 0, null());
-        AppendMenuW(menu, MF_STRING, ID_SETTINGS, wide("Settings").as_ptr());
-        AppendMenuW(menu, MF_STRING, ID_UPDATES, wide("Check for updates").as_ptr());
-        AppendMenuW(menu, MF_SEPARATOR, 0, null());
-        AppendMenuW(menu, MF_STRING, ID_EXIT, wide("Exit").as_ptr());
-
-        let mut p = POINT { x: 0, y: 0 };
-        GetCursorPos(&mut p);
-        // Required so the menu closes when the user clicks elsewhere.
-        SetForegroundWindow(hwnd);
-        let id = TrackPopupMenu(menu, TPM_RIGHTBUTTON | TPM_RETURNCMD | TPM_NONOTIFY, p.x, p.y, 0, hwnd, null());
-        PostMessageW(hwnd, WM_NULL, 0, 0);
-        DestroyMenu(menu);
-
-        match id as usize {
-            ID_UNDO => Some(MenuChoice::Undo),
-            ID_SAVE => Some(MenuChoice::SavePositions),
-            ID_RESTORE => Some(MenuChoice::RestorePositions),
-            ID_SETTINGS => Some(MenuChoice::Settings),
-            ID_UPDATES => Some(MenuChoice::CheckForUpdates),
-            ID_EXIT => Some(MenuChoice::Exit),
-            _ => None,
-        }
+    let item = |id, label, enabled| Entry::Item { id, label, enabled };
+    let entries = vec![
+        item(ID_UNDO, "Undo last snap", state.can_undo),
+        Entry::Separator,
+        item(ID_SAVE, "Save window positions", true),
+        item(ID_RESTORE, "Restore window positions", state.can_restore),
+        Entry::Separator,
+        item(ID_SETTINGS, "Settings", true),
+        item(ID_UPDATES, "Check for updates", true),
+        Entry::Separator,
+        item(ID_EXIT, "Exit", true),
+    ];
+    match menu::show(hwnd, entries, state.dark)? {
+        ID_UNDO => Some(MenuChoice::Undo),
+        ID_SAVE => Some(MenuChoice::SavePositions),
+        ID_RESTORE => Some(MenuChoice::RestorePositions),
+        ID_SETTINGS => Some(MenuChoice::Settings),
+        ID_UPDATES => Some(MenuChoice::CheckForUpdates),
+        ID_EXIT => Some(MenuChoice::Exit),
+        _ => None,
     }
 }
 

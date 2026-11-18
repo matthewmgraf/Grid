@@ -22,6 +22,29 @@ pub fn show_message(title: &str, text: &str, error: bool) {
     unsafe { MessageBoxW(null_mut(), wide(text).as_ptr(), wide(title).as_ptr(), style) };
 }
 
+/// Whether Windows apps are set to dark mode (Settings → Personalization → Colors).
+pub fn system_dark() -> bool {
+    use windows_sys::Win32::System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_DWORD, RegGetValueW};
+    let key = wide(r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
+    let name = wide("AppsUseLightTheme");
+    let mut light: u32 = 1;
+    let mut size = size_of::<u32>() as u32;
+    let ok = unsafe {
+        RegGetValueW(HKEY_CURRENT_USER, key.as_ptr(), name.as_ptr(), RRF_RT_REG_DWORD, null_mut(), (&mut light as *mut u32).cast(), &mut size)
+    } == 0;
+    ok && light == 0
+}
+
+/// Gives window `hwnd` (one of this process's, as an integer) a dark or light title bar. On
+/// Windows 11 this also sets whether its Acrylic backdrop is dark or light.
+pub fn set_dark_window(hwnd: isize, dark: bool) {
+    use windows_sys::Win32::Graphics::Dwm::{DWMWA_USE_IMMERSIVE_DARK_MODE, DwmSetWindowAttribute};
+    let value: i32 = dark.into();
+    unsafe {
+        DwmSetWindowAttribute(hwnd as HWND, DWMWA_USE_IMMERSIVE_DARK_MODE as u32, (&value as *const i32).cast(), size_of::<i32>() as u32);
+    }
+}
+
 /// Asks a Yes/No question in a standard Windows message box. Returns true for Yes.
 pub fn ask_yes_no(title: &str, text: &str) -> bool {
     use windows_sys::Win32::UI::WindowsAndMessaging::{IDYES, MB_ICONQUESTION, MB_YESNO};

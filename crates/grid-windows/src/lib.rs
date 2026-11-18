@@ -21,11 +21,13 @@ mod hotkeys;
 mod input;
 pub mod install;
 pub mod log;
+mod menu;
 mod monitors;
 mod os_settings;
 mod overlay;
 mod positions;
 mod splash;
+mod theme;
 mod tray;
 mod ui;
 pub mod update;
@@ -61,7 +63,7 @@ pub use capture::{PARENT_ENV as CAPTURE_PARENT_ENV, capture_hotkey, capture_inpu
 pub use elevation::RESTARTED;
 pub use monitors::Monitor;
 pub use os_settings::{drag_full_windows, set_drag_full_windows};
-pub use ui::{ask_yes_no, center_window, enforce_min_size, monitors, open_url, show_message, use_app_icon};
+pub use ui::{ask_yes_no, center_window, enforce_min_size, monitors, open_url, set_dark_window, show_message, system_dark, use_app_icon};
 
 /// Title of the settings window; used to find and focus it instead of opening a second one.
 pub const SETTINGS_TITLE: &str = "Grid Settings";

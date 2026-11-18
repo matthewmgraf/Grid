@@ -82,12 +82,98 @@ pub struct Platform {
     pub monitors: Option<fn() -> Vec<Monitor>>,
     /// Opens a web address in the user's browser (the About tab's links).
     pub open_url: Option<fn(&str)>,
+    pub look: Look,
 }
+
+/// What the platform layer provides for the glass look, shared by all of Grid's windows.
+#[derive(Clone, Copy, Default)]
+pub struct Look {
+    /// Whether the system is in dark mode (used when Appearance is "System").
+    pub system_dark: Option<fn() -> bool>,
+    /// The window (its native handle: an HWND on Windows) turned dark (true) or light: e.g. to
+    /// match its title bar and backdrop.
+    pub set_dark: Option<fn(isize, bool)>,
+}
+
+/// The parts of a window (with `theme.slint`'s `GlassBackdrop`) that `use_look` needs.
+trait Themed: slint::ComponentHandle + 'static {
+    fn set_system_dark(&self, dark: bool);
+    fn on_dark_changed(&self, f: impl FnMut(bool) + 'static);
+    fn dark(&self) -> bool;
+    fn set_glass(&self, glass: bool);
+}
+
+macro_rules! themed {
+    ($($window:ty),*) => {$(
+        impl Themed for $window {
+            fn set_system_dark(&self, dark: bool) { <$window>::set_system_dark(self, dark) }
+            fn on_dark_changed(&self, f: impl FnMut(bool) + 'static) { <$window>::on_dark_changed(self, f) }
+            fn dark(&self) -> bool { self.get_dark() }
+            fn set_glass(&self, glass: bool) { <$window>::set_glass(self, glass) }
+        }
+    )*};
+}
+themed!(SettingsWindow, AdminPrompt, SetupWindow, UninstallWindow);
+
+/// Gives `ui` the glass look: light or dark like the system (unless the Appearance setting says
+/// otherwise), with a matching title bar, and the blurred desktop behind it once it's shown.
+fn use_look(ui: &impl Themed, look: Look) {
+    ui.set_system_dark(look.system_dark.is_some_and(|dark| dark()));
+    let weak = ui.as_weak();
+    ui.on_dark_changed(move |dark| {
+        // Before the window is shown there is no native window yet; the timer below covers that.
+        if let (Some(set_dark), Some(handle)) = (look.set_dark, weak.upgrade().and_then(|ui| native_handle(ui.window()))) {
+            set_dark(handle, dark);
+        }
+    });
+    // The native window only exists once the event loop is running and the window is shown.
+    let weak = ui.as_weak();
+    slint::Timer::single_shot(std::time::Duration::from_millis(GLASS_DELAY_MS), move || {
+        if let Some(ui) = weak.upgrade() {
+            if let (Some(set_dark), Some(handle)) = (look.set_dark, native_handle(ui.window())) {
+                set_dark(handle, ui.dark());
+            }
+            ui.set_glass(apply_glass(ui.window()));
+        }
+    });
+}
+
+/// The window's native handle (HWND on Windows, NSView on macOS), once it exists.
+fn native_handle(window: &slint::Window) -> Option<isize> {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    match window.window_handle().window_handle().ok()?.as_raw() {
+        RawWindowHandle::Win32(h) => Some(h.hwnd.get()),
+        RawWindowHandle::AppKit(h) => Some(h.ns_view.as_ptr() as isize),
+        _ => None,
+    }
+}
+
+/// How long after starting a window its glass is applied (see `use_look`).
+const GLASS_DELAY_MS: u64 = 300;
 
 /// Grid's home page, shown on the About tab.
 pub const REPO_URL: &str = "https://github.com/matthewmgraf/Grid";
 /// Where people can support Grid with a donation (GitHub Sponsors).
 pub const SPONSOR_URL: &str = "https://github.com/sponsors/matthewmgraf";
+
+/// Logo sizes in logical pixels (same as in the .slint files): the settings window's sidebar,
+/// the admin and uninstall windows, and the setup window.
+const SIDEBAR_LOGO: u32 = 28;
+const DIALOG_LOGO: u32 = 32;
+const SETUP_LOGO: u32 = 48;
+
+/// Gives `ui` the logo at `size` logical pixels, drawn at the screen's exact pixel size once the
+/// window is shown (a shrunken large logo looks smudged).
+fn sharp_logo<T: slint::ComponentHandle + 'static>(ui: &T, size: u32, set: fn(&T, slint::Image)) {
+    set(ui, logo_image(size));
+    let weak = ui.as_weak();
+    slint::Timer::single_shot(std::time::Duration::from_millis(GLASS_DELAY_MS), move || {
+        if let Some(ui) = weak.upgrade() {
+            let px = (size as f32 * ui.window().scale_factor()).round() as u32;
+            set(&ui, logo_image(px));
+        }
+    });
+}
 
 /// How often the monitor list is checked for changes.
 const MONITOR_POLL: std::time::Duration = std::time::Duration::from_millis(1500);
@@ -105,13 +191,16 @@ pub fn run(path: &Path, platform: Platform) -> Result<(), String> {
         window_shown,
         monitors: list_monitors,
         open_url,
+        look,
     } = platform;
     let monitors = list_monitors.map(|list| list()).unwrap_or_default();
     let (settings, warning) = Settings::load(path);
     let ui = SettingsWindow::new().map_err(|e| e.to_string())?;
 
+    use_look(&ui, look);
     ui.set_version(env!("CARGO_PKG_VERSION").into());
     ui.set_logo(logo_image(256));
+    sharp_logo(&ui, SIDEBAR_LOGO, SettingsWindow::set_sidebar_logo);
     ui.set_repo_url(REPO_URL.into());
     ui.set_sponsor_url(SPONSOR_URL.into());
     ui.set_links_available(open_url.is_some());
@@ -404,6 +493,22 @@ pub fn run(path: &Path, platform: Platform) -> Result<(), String> {
     ui.run().map_err(|e| e.to_string())
 }
 
+/// Puts a frosted-glass backdrop (blurred desktop) behind `window`: Acrylic on Windows 11,
+/// vibrancy on macOS. Returns false where the system can't, and the window stays opaque.
+fn apply_glass(window: &slint::Window) -> bool {
+    let handle = window.window_handle();
+    #[cfg(target_os = "windows")]
+    let result = window_vibrancy::apply_acrylic(&handle, None);
+    #[cfg(target_os = "macos")]
+    let result = window_vibrancy::apply_vibrancy(&handle, window_vibrancy::NSVisualEffectMaterial::HudWindow, None, None);
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    let result: Result<(), ()> = {
+        let _ = handle;
+        Err(())
+    };
+    result.is_ok()
+}
+
 /// Starts waiting for a key press for row `index` of `command`'s inputs. The result arrives
 /// later through `finish_capture`.
 fn start_capture(ui: &SettingsWindow, capture: Option<CaptureFn>, command: SharedString, index: i32) {
@@ -649,10 +754,12 @@ fn read_form(ui: &SettingsWindow, original: &Settings, monitors: &[Monitor]) -> 
 
 /// Asks whether to restart Grid as administrator, after it failed to move an elevated app's
 /// window. Returns (Yes, "Don't ask again until Grid restarts"); closing the window counts as No.
-pub fn ask_admin_restart(path: &Path, window_shown: Option<fn()>) -> Result<(bool, bool), String> {
+pub fn ask_admin_restart(path: &Path, window_shown: Option<fn()>, look: Look) -> Result<(bool, bool), String> {
     let (settings, _) = Settings::load(path);
     let ui = AdminPrompt::new().map_err(|e| e.to_string())?;
     ui.set_appearance(appearance_name(settings.appearance).into());
+    use_look(&ui, look);
+    sharp_logo(&ui, DIALOG_LOGO, AdminPrompt::set_logo);
     let answer = Rc::new(std::cell::Cell::new(false));
     ui.on_answered({
         let answer = answer.clone();
@@ -670,9 +777,10 @@ pub fn ask_admin_restart(path: &Path, window_shown: Option<fn()>) -> Result<(boo
 
 /// Shows the setup window: install for all users, for this user, or run portably. `existing` is
 /// shown above the choices (e.g. that Grid is already installed). `None` if canceled.
-pub fn ask_setup(existing: Option<String>, window_shown: Option<fn()>) -> Result<Option<SetupChoice>, String> {
+pub fn ask_setup(existing: Option<String>, window_shown: Option<fn()>, look: Look) -> Result<Option<SetupChoice>, String> {
     let ui = SetupWindow::new().map_err(|e| e.to_string())?;
-    ui.set_logo(logo_image(96));
+    use_look(&ui, look);
+    sharp_logo(&ui, SETUP_LOGO, SetupWindow::set_logo);
     ui.set_existing(existing.unwrap_or_default().into());
     let answer = Rc::new(std::cell::Cell::new(None));
     ui.on_chosen({
@@ -698,10 +806,12 @@ pub fn ask_setup(existing: Option<String>, window_shown: Option<fn()>) -> Result
 }
 
 /// Asks before uninstalling. `Some(delete_settings)` to go ahead, `None` if canceled.
-pub fn ask_uninstall(path: &Path, window_shown: Option<fn()>) -> Result<Option<bool>, String> {
+pub fn ask_uninstall(path: &Path, window_shown: Option<fn()>, look: Look) -> Result<Option<bool>, String> {
     let (settings, _) = Settings::load(path);
     let ui = UninstallWindow::new().map_err(|e| e.to_string())?;
     ui.set_appearance(appearance_name(settings.appearance).into());
+    use_look(&ui, look);
+    sharp_logo(&ui, DIALOG_LOGO, UninstallWindow::set_logo);
     let answer = Rc::new(std::cell::Cell::new(None));
     ui.on_answered({
         let (answer, weak) = (answer.clone(), ui.as_weak());

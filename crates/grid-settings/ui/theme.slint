@@ -1,0 +1,75 @@
+// Grid's glass look, shared by all of its windows: colors, the frosted card, and a base window
+// that follows the Appearance setting and Windows' light/dark mode.
+import { Palette } from "std-widgets.slint";
+// Plus Jakarta Sans (SIL Open Font License, see fonts/OFL.txt), built into grid.exe.
+import "fonts/PlusJakartaSans.ttf";
+
+/// Colors of the glass look, for light and dark mode.
+export global Glass {
+    /// Set by the window from the Appearance setting and the system's mode. (Slint's
+    /// `Palette.color-scheme` doesn't report the system's mode when following it.)
+    in-out property <bool> dark;
+    /// Laid over the blurred desktop so text stays readable: Grid's default overlay tint
+    /// (#0F172A) in dark mode, a pale blue-gray in light mode.
+    out property <color> tint: dark ? #0f172a73 : #eef3f98c;
+    out property <color> card: dark ? #ffffff0f : #ffffff80;
+    out property <color> card-border: dark ? #ffffff1f : #0f172a1a;
+    out property <color> divider: dark ? #ffffff17 : #0f172a14;
+    out property <color> hover: dark ? #ffffff12 : #0f172a0d;
+    /// The selected sidebar item: Grid's default colors (#60CDFF dark, #0078D4 light).
+    out property <color> selected: dark ? #60cdff29 : #0078d41f;
+    out property <color> accent: dark ? #60cdff : #0078d4;
+}
+
+/// A frosted panel holding one group of settings or choices.
+export component Card inherits Rectangle {
+    in property <string> title;
+    border-radius: 12px;
+    border-width: 1px;
+    background: Glass.card;
+    border-color: Glass.card-border;
+    VerticalLayout {
+        padding: 14px;
+        spacing: 8px;
+        if root.title != "": Text { text: root.title; font-size: 14px; font-weight: 700; }
+        @children
+    }
+}
+
+/// A thin line between items in a card.
+export component Divider inherits Rectangle {
+    height: 1px;
+    background: Glass.divider;
+}
+
+/// The glass look's backdrop, placed first in each window (behind everything else): a tint over the
+/// blurred desktop once `glass` is set, so text stays readable on any wallpaper. It also makes
+/// the window light or dark from the Appearance setting and the system's mode. (Slint doesn't
+/// let Rust code reach properties a window inherits, so each window declares its own and passes
+/// them in; see `SettingsWindow`.)
+export component GlassBackdrop inherits Rectangle {
+    in property <bool> glass;
+    /// "Light", "Dark" or "System".
+    in property <string> appearance;
+    /// Whether the system is in dark mode; used when Appearance is "System".
+    in property <bool> system-dark;
+    callback dark-changed(bool);
+    background: root.glass ? Glass.tint : transparent;
+
+    function apply-appearance() {
+        Palette.color-scheme = root.appearance == "Dark" ? ColorScheme.dark
+            : root.appearance == "Light" ? ColorScheme.light : ColorScheme.unknown;
+        Glass.dark = root.appearance == "Dark" || (root.appearance != "Light" && root.system-dark);
+        root.dark-changed(Glass.dark);
+    }
+
+    init => {
+        root.apply-appearance();
+    }
+    changed appearance => {
+        root.apply-appearance();
+    }
+    changed system-dark => {
+        root.apply-appearance();
+    }
+}

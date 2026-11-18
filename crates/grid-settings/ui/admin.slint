@@ -1,28 +1,55 @@
-import { Button, CheckBox, HorizontalBox, Palette, VerticalBox } from "std-widgets.slint";
+import { Button, CheckBox, HorizontalBox, Palette } from "std-widgets.slint";
+import { Glass, GlassBackdrop } from "theme.slint";
 
 /// Asked when the user drags a window Grid can't move because that app runs as administrator.
 export component AdminPrompt inherits Window {
     // Same as ADMIN_PROMPT_TITLE in grid-windows.
     title: "Grid - Administrator rights";
-    width: 440px;
+    width: 460px;
     // Grid runs in the background, so Windows may not bring this window to the front by itself.
     always-on-top: true;
-    in property <string> appearance: "System";
+    default-font-family: "Plus Jakarta Sans";
+    /// The desktop shows through, blurred, once the system's backdrop is in place (set by the
+    /// app). Until then, or where there is none, the window is opaque.
+    in property <bool> glass;
+    background: root.glass ? transparent : Palette.background;
+    /// "Light", "Dark" or "System".
+    in-out property <string> appearance: "System";
+    /// Whether the system is in dark mode; used when Appearance is "System".
+    in property <bool> system-dark;
+    /// Whether the window is dark right now; `dark-changed` reports changes.
+    out property <bool> dark: Glass.dark;
+    callback dark-changed(bool);
+    in property <image> logo;
     in-out property <bool> dont-ask;
     callback answered(bool);
 
-    init => {
-        Palette.color-scheme = root.appearance == "Dark" ? ColorScheme.dark
-            : root.appearance == "Light" ? ColorScheme.light : ColorScheme.unknown;
+    GlassBackdrop {
+        glass: root.glass;
+        appearance: root.appearance;
+        system-dark: root.system-dark;
+        dark-changed(dark) => { root.dark-changed(dark); }
     }
 
-    VerticalBox {
+    VerticalLayout {
+        padding: 20px;
+        spacing: 12px;
+        HorizontalLayout {
+            spacing: 12px;
+            Image { source: root.logo; width: 32px; height: 32px; }
+            Text {
+                text: "Administrator rights needed";
+                font-size: 17px;
+                font-weight: 700;
+                vertical-alignment: center;
+            }
+        }
         Text {
             text: "This window can't be adjusted because it was run as an administrator. Would you like to restart Grid with administrator rights?";
             wrap: word-wrap;
             // A fixed width, so Slint sizes the window for the wrapped lines (it otherwise works
             // out the height for one long line and the buttons get cut off).
-            width: 410px;
+            width: 420px;
         }
         CheckBox {
             text: "Don't ask again until Grid restarts";
@@ -31,13 +58,14 @@ export component AdminPrompt inherits Window {
         Text {
             text: "To turn this question off for good, see Settings → General.";
             wrap: word-wrap;
-            width: 410px;
+            width: 420px;
             font-size: 12px;
-            opacity: 0.75;
+            opacity: 0.7;
         }
         // Same buttons as Close and Save in the settings window.
         HorizontalBox {
             padding: 0;
+            padding-top: 4px;
             alignment: end;
             Button {
                 text: "No";

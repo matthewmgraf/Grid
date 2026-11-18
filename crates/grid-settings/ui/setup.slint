@@ -1,16 +1,17 @@
-import { Button, CheckBox, GroupBox, HorizontalBox, Palette, VerticalBox } from "std-widgets.slint";
+import { Button, CheckBox, HorizontalBox, Palette } from "std-widgets.slint";
+import { Card, Divider, Glass, GlassBackdrop } from "theme.slint";
 
 /// One way to set up Grid: a button and what it does.
-component Choice inherits HorizontalBox {
+component Choice inherits HorizontalLayout {
     in property <string> label;
     in property <string> detail;
     in property <bool> recommended;
     callback chosen();
-    padding: 0;
+    spacing: 14px;
     Button {
         text: root.label;
         primary: root.recommended;
-        width: 230px;
+        width: 220px;
         clicked => { root.chosen(); }
     }
     Text {
@@ -25,23 +26,43 @@ component Choice inherits HorizontalBox {
 export component UninstallWindow inherits Window {
     // Same as UNINSTALL_TITLE in grid-windows.
     title: "Uninstall Grid";
-    width: 440px;
+    width: 460px;
     always-on-top: true;
-    in property <string> appearance: "System";
+    default-font-family: "Plus Jakarta Sans";
+    /// The desktop shows through, blurred, once the system's backdrop is in place (set by the
+    /// app). Until then, or where there is none, the window is opaque.
+    in property <bool> glass;
+    background: root.glass ? transparent : Palette.background;
+    /// "Light", "Dark" or "System".
+    in-out property <string> appearance: "System";
+    /// Whether the system is in dark mode; used when Appearance is "System".
+    in property <bool> system-dark;
+    /// Whether the window is dark right now; `dark-changed` reports changes.
+    out property <bool> dark: Glass.dark;
+    callback dark-changed(bool);
+    in property <image> logo;
     in-out property <bool> delete-settings;
     callback answered(bool);
 
-    init => {
-        Palette.color-scheme = root.appearance == "Dark" ? ColorScheme.dark
-            : root.appearance == "Light" ? ColorScheme.light : ColorScheme.unknown;
+    GlassBackdrop {
+        glass: root.glass;
+        appearance: root.appearance;
+        system-dark: root.system-dark;
+        dark-changed(dark) => { root.dark-changed(dark); }
     }
 
-    VerticalBox {
-        Text {
-            text: "Remove Grid from this PC?";
-            wrap: word-wrap;
-            // Fixed, so the window is sized for the wrapped text (see admin.slint).
-            width: 410px;
+    VerticalLayout {
+        padding: 20px;
+        spacing: 12px;
+        HorizontalLayout {
+            spacing: 12px;
+            Image { source: root.logo; width: 32px; height: 32px; }
+            Text {
+                text: "Remove Grid from this PC?";
+                font-size: 17px;
+                font-weight: 700;
+                vertical-alignment: center;
+            }
         }
         CheckBox {
             text: "Also delete my settings and saved window positions";
@@ -49,6 +70,7 @@ export component UninstallWindow inherits Window {
         }
         HorizontalBox {
             padding: 0;
+            padding-top: 4px;
             alignment: end;
             Button {
                 text: "Cancel";
@@ -67,10 +89,21 @@ export component UninstallWindow inherits Window {
 export component SetupWindow inherits Window {
     // Same as SETUP_TITLE in grid-windows.
     title: "Grid Setup";
-    width: 560px;
+    width: 580px;
     always-on-top: true;
+    default-font-family: "Plus Jakarta Sans";
+    /// The desktop shows through, blurred, once the system's backdrop is in place (set by the
+    /// app). Until then, or where there is none, the window is opaque.
+    in property <bool> glass;
+    background: root.glass ? transparent : Palette.background;
+    /// "Light", "Dark" or "System".
+    in-out property <string> appearance: "System";
+    /// Whether the system is in dark mode; used when Appearance is "System".
+    in property <bool> system-dark;
+    /// Whether the window is dark right now; `dark-changed` reports changes.
+    out property <bool> dark: Glass.dark;
+    callback dark-changed(bool);
     in property <image> logo;
-    in property <string> appearance: "System";
     /// Non-empty when Grid is already installed on this PC: says so above the choices.
     in property <string> existing;
     in-out property <bool> autostart: true;
@@ -78,52 +111,64 @@ export component SetupWindow inherits Window {
     callback chosen(string);
     callback canceled();
 
-    init => {
-        Palette.color-scheme = root.appearance == "Dark" ? ColorScheme.dark
-            : root.appearance == "Light" ? ColorScheme.light : ColorScheme.unknown;
+    GlassBackdrop {
+        glass: root.glass;
+        appearance: root.appearance;
+        system-dark: root.system-dark;
+        dark-changed(dark) => { root.dark-changed(dark); }
     }
 
-    VerticalBox {
-        HorizontalBox {
-            padding: 0;
+    VerticalLayout {
+        padding: 20px;
+        spacing: 14px;
+        HorizontalLayout {
+            spacing: 14px;
             Image { source: root.logo; width: 48px; height: 48px; }
             VerticalLayout {
                 alignment: center;
-                Text { text: "Welcome to Grid"; font-size: 20px; font-weight: 600; }
-                Text { text: "Install Grid on this PC, or run it from this folder."; }
+                spacing: 2px;
+                Text { text: "Welcome to Grid"; font-size: 22px; font-weight: 700; }
+                Text { text: "Install Grid on this PC, or run it from this folder."; opacity: 0.8; }
             }
         }
         if root.existing != "": Text {
             text: root.existing;
             wrap: word-wrap;
-            width: 530px;
+            // Fixed, so the window is sized for the wrapped text (see admin.slint).
+            width: 540px;
         }
-        Choice {
-            label: "Install for all users";
-            detail: "Recommended, for the best compatibility. Windows will ask for administrator rights.";
-            recommended: true;
-            chosen => { root.chosen("all"); }
+        Card {
+            Choice {
+                label: "Install for all users";
+                detail: "Recommended, for the best compatibility. Windows will ask for administrator rights.";
+                recommended: true;
+                chosen => { root.chosen("all"); }
+            }
+            Divider { }
+            Choice {
+                label: "Install just for me";
+                detail: "No administrator rights needed.";
+                chosen => { root.chosen("user"); }
+            }
+            Divider { }
+            Choice {
+                label: "Run without installing";
+                detail: "Portable: Grid and its settings stay in this folder. It won't start with Windows.";
+                chosen => { root.chosen("portable"); }
+            }
         }
-        Choice {
-            label: "Install just for me";
-            detail: "No administrator rights needed.";
-            chosen => { root.chosen("user"); }
-        }
-        Choice {
-            label: "Run without installing";
-            detail: "Portable: Grid and its settings stay in this folder. It won't start with Windows.";
-            chosen => { root.chosen("portable"); }
-        }
-        CheckBox {
-            text: "Start Grid when Windows starts";
-            checked <=> root.autostart;
-        }
-        Text {
-            text: "Only when installed: Grid can't start with Windows when run without installing.";
-            wrap: word-wrap;
-            width: 530px;
-            font-size: 12px;
-            opacity: 0.75;
+        Card {
+            CheckBox {
+                text: "Start Grid when Windows starts";
+                checked <=> root.autostart;
+            }
+            Text {
+                text: "Only when installed: Grid can't start with Windows when run without installing.";
+                wrap: word-wrap;
+                width: 510px;
+                font-size: 12px;
+                opacity: 0.7;
+            }
         }
         HorizontalBox {
             padding: 0;

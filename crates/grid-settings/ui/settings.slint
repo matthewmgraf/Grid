@@ -1,6 +1,38 @@
 export { SetupWindow, UninstallWindow } from "setup.slint";
 export { AdminPrompt } from "admin.slint";
-import { AboutSlint, Button, CheckBox, ComboBox, GroupBox, HorizontalBox, LineEdit, Palette, ScrollView, Slider, SpinBox, TabWidget, VerticalBox } from "std-widgets.slint";
+import { AboutSlint, Button, CheckBox, ComboBox, HorizontalBox, LineEdit, Palette, ScrollView, Slider, VerticalBox } from "std-widgets.slint";
+import { Card, Glass, GlassBackdrop } from "theme.slint";
+
+/// One page in the sidebar.
+component NavItem inherits Rectangle {
+    in property <string> text;
+    in property <bool> selected;
+    callback clicked();
+    height: 36px;
+    border-radius: 8px;
+    background: root.selected ? Glass.selected : touch.has-hover ? Glass.hover : transparent;
+    accessible-role: tab;
+    accessible-label: root.text;
+    accessible-item-selected: root.selected;
+    accessible-action-default => { root.clicked(); }
+    // A short accent bar marks the selected page.
+    Rectangle {
+        x: 0;
+        width: 3px;
+        height: root.selected ? 16px : 0px;
+        border-radius: 1.5px;
+        background: Glass.accent;
+    }
+    HorizontalLayout {
+        padding-left: 14px;
+        Text {
+            text: root.text;
+            vertical-alignment: center;
+            font-weight: root.selected ? 700 : 500;
+        }
+    }
+    touch := TouchArea { clicked => { root.clicked(); } }
+}
 
 export struct MonitorRow {
     label: string,
@@ -23,9 +55,63 @@ component ColorField inherits HorizontalLayout {
     LineEdit { text <=> root.value; placeholder-text: "#RRGGBB"; edited => { root.edited(); } }
 }
 
+/// A labeled whole number on its own line: a text box plus − and + buttons. (Not Slint's
+/// SpinBox: it changes its value on the mouse wheel, so scrolling the page changed settings.)
+component NumberRow inherits HorizontalLayout {
+    in property <string> label;
+    in property <int> minimum;
+    in property <int> maximum;
+    in-out property <int> value;
+    in property <bool> enabled: true;
+    /// The user changed the number (already kept within minimum and maximum).
+    callback edited(int);
+    spacing: 8px;
+
+    function set(v: int) {
+        root.value = Math.clamp(v, root.minimum, root.maximum);
+        box.text = root.value;
+        root.edited(root.value);
+    }
+
+    Label { text: root.label; min-width: 150px; }
+    box := LineEdit {
+        enabled: root.enabled;
+        input-type: number;
+        text: root.value;
+        width: 80px;
+        accessible-label: root.label;
+        edited(t) => {
+            if t.is-float() {
+                root.value = Math.clamp(t.to-float().round(), root.minimum, root.maximum);
+                root.edited(root.value);
+            }
+        }
+        accepted => { self.text = root.value; }
+        // Shows the number actually kept (e.g. after typing more than the maximum).
+        changed has-focus => {
+            if !self.has-focus {
+                self.text = root.value;
+            }
+        }
+    }
+    Button {
+        text: "−";
+        accessible-label: "Decrease " + root.label;
+        enabled: root.enabled && root.value > root.minimum;
+        clicked => { root.set(root.value - 1); }
+    }
+    Button {
+        text: "+";
+        accessible-label: "Increase " + root.label;
+        enabled: root.enabled && root.value < root.maximum;
+        clicked => { root.set(root.value + 1); }
+    }
+    Rectangle { horizontal-stretch: 1; }
+}
+
 /// The inputs bound to one command. Clicking an input (or Add input) waits for the user to
 /// press the key or mouse button they want.
-component BindingGroup inherits GroupBox {
+component BindingGroup inherits Card {
     in property <string> hint;
     in property <[string]> inputs;
     /// Row waiting for a key press, or -1.
@@ -36,7 +122,8 @@ component BindingGroup inherits GroupBox {
     callback add();
     callback remove(int);
 
-    VerticalBox {
+    VerticalLayout {
+        spacing: 8px;
         Text { text: root.hint; wrap: word-wrap; }
         for name[i] in root.inputs: HorizontalBox {
             padding: 0;
@@ -121,11 +208,27 @@ component HotkeyRow inherits HorizontalBox {
 
 export component SettingsWindow inherits Window {
     title: "Grid Settings";
-    preferred-width: 640px;
-    preferred-height: 560px;
+    preferred-width: 820px;
+    preferred-height: 600px;
     // Also enforced by the app (grid-app main.rs), so snapping can't shrink it further.
-    min-width: 520px;
-    min-height: 440px;
+    min-width: 680px;
+    min-height: 460px;
+    default-font-family: "Plus Jakarta Sans";
+    /// The desktop shows through, blurred, once the system's backdrop is in place (set by the
+    /// app). Until then, or where there is none, the window is opaque.
+    in property <bool> glass;
+    background: root.glass ? transparent : Palette.background;
+    /// "Light", "Dark" or "System".
+    in-out property <string> appearance: "System";
+    /// Whether the system is in dark mode; used when Appearance is "System".
+    in property <bool> system-dark;
+    /// Whether the window is dark right now; `dark-changed` reports changes.
+    out property <bool> dark: Glass.dark;
+    callback dark-changed(bool);
+    /// The sidebar's logo, drawn at its on-screen pixel size.
+    in property <image> sidebar-logo;
+    property <[string]> pages: ["Grid", "Overlay", "Input", "General", "About"];
+    property <int> page: 0;
 
     in property <string> version;
     in property <image> logo;
@@ -138,7 +241,6 @@ export component SettingsWindow inherits Window {
     in-out property <string> status;
     /// True when the form differs from the saved settings; enables Save.
     in property <bool> dirty;
-    in-out property <string> appearance: "System";
     in-out property <int> cols: 8;
     in-out property <int> rows: 8;
     in-out property <bool> transpose-portrait: true;
@@ -208,84 +310,109 @@ export component SettingsWindow inherits Window {
     /// A Windows setting was toggled: (name, new value). Only "drag" for now.
     callback os-setting-changed(string, bool);
 
-    function apply-appearance() {
-        Palette.color-scheme = root.appearance == "Dark" ? ColorScheme.dark
-            : root.appearance == "Light" ? ColorScheme.light : ColorScheme.unknown;
+    GlassBackdrop {
+        glass: root.glass;
+        appearance: root.appearance;
+        system-dark: root.system-dark;
+        dark-changed(dark) => { root.dark-changed(dark); }
     }
 
-    init => {
-        root.apply-appearance();
-    }
-    changed appearance => {
-        root.apply-appearance();
-    }
+    HorizontalLayout {
+        // Sidebar: the logo and one item per page.
+        VerticalLayout {
+            width: 188px;
+            padding: 14px;
+            padding-top: 18px;
+            spacing: 4px;
+            HorizontalLayout {
+                padding-left: 6px;
+                padding-bottom: 14px;
+                spacing: 10px;
+                Image { source: root.sidebar-logo; width: 28px; height: 28px; }
+                Text { text: "Grid"; font-size: 18px; font-weight: 700; vertical-alignment: center; }
+            }
+            for name[i] in root.pages: NavItem {
+                text: name;
+                selected: root.page == i;
+                clicked => {
+                    root.page = i;
+                    root.status = "";
+                }
+            }
+            Rectangle { vertical-stretch: 1; }
+            HorizontalLayout {
+                padding-left: 14px;
+                Text { text: "Version " + root.version; font-size: 11px; opacity: 0.6; }
+            }
+        }
+        Rectangle { width: 1px; background: Glass.divider; }
 
-    VerticalBox {
-        TabWidget {
-            changed current-index => { root.status = ""; }
-            Tab {
-                title: "Grid";
-                TabPage {
-                        GroupBox {
+        VerticalLayout {
+            padding: 8px;
+            padding-top: 16px;
+            HorizontalLayout {
+                padding-left: 8px;
+                padding-bottom: 4px;
+                Text { text: root.pages[root.page]; font-size: 22px; font-weight: 700; }
+            }
+            if root.page == 0: TabPage {
+                        Card {
                             title: "Default grid";
-                            HorizontalBox {
-                                Label { text: "Columns"; min-width: 0; }
-                                SpinBox { minimum: 1; maximum: 64; value <=> root.cols; edited(v) => { self.value = Math.clamp(v, 1, 64); root.edited(); } }
-                                Label { text: "Rows"; min-width: 0; }
-                                SpinBox { minimum: 1; maximum: 64; value <=> root.rows; edited(v) => { self.value = Math.clamp(v, 1, 64); root.edited(); } }
-                            }
+                            NumberRow { label: "Columns"; minimum: 1; maximum: 64; value <=> root.cols; edited => { root.edited(); } }
+                            NumberRow { label: "Rows"; minimum: 1; maximum: 64; value <=> root.rows; edited => { root.edited(); } }
                         }
-                        GroupBox {
+                        Card {
                             title: "Gaps (pixels at 100% scaling)";
-                            HorizontalBox {
-                                Label { text: "Between windows"; min-width: 0; }
-                                SpinBox { minimum: 0; maximum: 100; value <=> root.gap-between; edited(v) => { self.value = Math.clamp(v, 0, 100); root.edited(); } }
-                                Label { text: "At screen edges"; min-width: 0; }
-                                SpinBox { minimum: 0; maximum: 100; value <=> root.gap-edges; edited(v) => { self.value = Math.clamp(v, 0, 100); root.edited(); } }
-                            }
+                            NumberRow { label: "Between windows"; minimum: 0; maximum: 100; value <=> root.gap-between; edited => { root.edited(); } }
+                            NumberRow { label: "At screen edges"; minimum: 0; maximum: 100; value <=> root.gap-edges; edited => { root.edited(); } }
                         }
-                        CheckBox {
-                            text: "Swap columns and rows on portrait monitors";
-                            checked <=> root.transpose-portrait;
-                            toggled => { root.edited(); }
-                        }
-                        GroupBox {
+                        Card {
                             title: "Monitors";
-                            VerticalBox {
-                                // The monitor's name on its own line, since names can be long.
+                            VerticalLayout {
+                                spacing: 16px;
                                 for m[i] in root.monitors: VerticalLayout {
-                                    Text { text: m.label; overflow: elide; }
-                                    HorizontalBox {
-                                        own := CheckBox {
-                                            text: "Own grid";
-                                            checked: m.custom;
-                                            toggled => { root.monitor-edited(i, self.checked, c.value, r.value); }
-                                        }
-                                        c := SpinBox {
-                                            enabled: own.checked;
-                                            minimum: 1;
-                                            maximum: 64;
-                                            value: m.cols;
-                                            edited(v) => { root.monitor-edited(i, own.checked, Math.clamp(v, 1, 64), r.value); }
-                                        }
-                                        r := SpinBox {
-                                            enabled: own.checked;
-                                            minimum: 1;
-                                            maximum: 64;
-                                            value: m.rows;
-                                            edited(v) => { root.monitor-edited(i, own.checked, c.value, Math.clamp(v, 1, 64)); }
-                                        }
+                                    spacing: 6px;
+                                    // The monitor's name on its own line, since names can be long.
+                                    Text { text: m.label; overflow: elide; font-weight: 600; }
+                                    own := CheckBox {
+                                        text: "Own grid";
+                                        checked: m.custom;
+                                        toggled => { root.monitor-edited(i, self.checked, c.value, r.value); }
+                                    }
+                                    c := NumberRow {
+                                        label: "Columns";
+                                        enabled: own.checked;
+                                        minimum: 1;
+                                        maximum: 64;
+                                        value: m.cols;
+                                        edited(v) => { root.monitor-edited(i, own.checked, v, r.value); }
+                                    }
+                                    r := NumberRow {
+                                        label: "Rows";
+                                        enabled: own.checked;
+                                        minimum: 1;
+                                        maximum: 64;
+                                        value: m.rows;
+                                        edited(v) => { root.monitor-edited(i, own.checked, c.value, v); }
                                     }
                                 }
                             }
                         }
-                }
+                        Card {
+                            title: "Miscellaneous";
+                            CheckBox {
+                                text: "Swap columns and rows on portrait monitors";
+                                checked <=> root.transpose-portrait;
+                                toggled => { root.edited(); }
+                            }
+                        }
             }
 
-            Tab {
-                title: "Overlay";
-                TabPage {
+            if root.page == 1: TabPage {
+                    Card {
+                        title: "Appearance";
                         HorizontalBox {
+                            padding: 0;
                             Label { text: "Opacity"; }
                             Slider { minimum: 0.1; maximum: 1.0; value <=> root.overlay-opacity; changed => { root.edited(); } }
                             Text {
@@ -308,12 +435,10 @@ export component SettingsWindow inherits Window {
                             alignment: start;
                             Button { text: "Reset to defaults"; clicked => { root.reset-overlay(); } }
                         }
-                }
+                    }
             }
 
-            Tab {
-                title: "Input";
-                TabPage {
+            if root.page == 2: TabPage {
                         Text {
                             text: "While dragging a window, press one of these to start grid mode. Click an input to change it.";
                             wrap: word-wrap;
@@ -348,7 +473,7 @@ export component SettingsWindow inherits Window {
                             add => { root.add-binding("Cancel"); }
                             remove(i) => { root.remove-binding("Cancel", i); }
                         }
-                        GroupBox {
+                        Card {
                             title: "Hotkeys";
                             VerticalBox {
                                 Text { text: "These work any time, not only while dragging."; wrap: word-wrap; }
@@ -378,26 +503,27 @@ export component SettingsWindow inherits Window {
                                 }
                             }
                         }
-                }
             }
 
-            Tab {
-                title: "General";
-                TabPage {
-                        HorizontalBox {
-                            Label { text: "Appearance"; }
-                            ComboBox {
-                                model: ["System", "Light", "Dark"];
-                                current-value <=> root.appearance;
-                                selected => { root.edited(); }
+            if root.page == 3: TabPage {
+                        Card {
+                            title: "Appearance";
+                            HorizontalBox {
+                                padding: 0;
+                                Label { text: "Theme"; }
+                                ComboBox {
+                                    model: ["System", "Light", "Dark"];
+                                    current-value <=> root.appearance;
+                                    selected => { root.edited(); }
+                                }
+                            }
+                            CheckBox {
+                                text: "Show the splash screen when Grid starts";
+                                checked <=> root.splash;
+                                toggled => { root.edited(); }
                             }
                         }
-                        CheckBox {
-                            text: "Show the splash screen when Grid starts";
-                            checked <=> root.splash;
-                            toggled => { root.edited(); }
-                        }
-                        if root.install-available: GroupBox {
+                        if root.install-available: Card {
                             title: "Installation";
                             VerticalBox {
                                 Text { text: root.install-status; wrap: word-wrap; }
@@ -429,7 +555,7 @@ export component SettingsWindow inherits Window {
                                 }
                             }
                         }
-                        if root.admin-available: GroupBox {
+                        if root.admin-available: Card {
                             title: "Administrator rights";
                             VerticalBox {
                                 Text {
@@ -456,7 +582,7 @@ export component SettingsWindow inherits Window {
                                 }
                             }
                         }
-                        GroupBox {
+                        Card {
                             title: "Updates";
                             VerticalBox {
                                 CheckBox {
@@ -472,7 +598,7 @@ export component SettingsWindow inherits Window {
                                 }
                             }
                         }
-                        if root.os-available: GroupBox {
+                        if root.os-available: Card {
                             title: "Recommended Windows settings";
                             VerticalBox {
                                 Text {
@@ -486,12 +612,9 @@ export component SettingsWindow inherits Window {
                                 }
                             }
                         }
-                }
             }
 
-            Tab {
-                title: "About";
-                ScrollView {
+            if root.page == 4: ScrollView {
                     // Centered, and kept at its natural size as the window grows.
                     HorizontalLayout {
                         alignment: center;
@@ -532,12 +655,12 @@ export component SettingsWindow inherits Window {
                             }
                         }
                     }
-                }
             }
-        }
 
         HorizontalBox {
             padding: 0;
+            // The same space above the buttons as below them.
+            padding-top: 10px;
             // Bottom left, beside the buttons, with room for two lines (always reserved, so the
             // page doesn't jump when a message appears). Messages are kept short enough to fit
             // at the minimum window width. (Not `overflow: elide`: with wrapping, Slint 1.18
@@ -559,6 +682,7 @@ export component SettingsWindow inherits Window {
                 enabled: root.dirty;
                 clicked => { root.save(); }
             }
+        }
         }
     }
 

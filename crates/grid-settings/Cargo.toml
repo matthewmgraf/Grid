@@ -13,7 +13,14 @@ slint = { version = "1.18.1", default-features = false, features = [
     "backend-winit",
     "renderer-software",
     "accessibility",
+    "raw-window-handle-06",
 ] }
+# The frosted-glass backdrop behind the settings window (Acrylic on Windows 11, vibrancy on
+# macOS). Small, and it covers both platforms with one call.
+window-vibrancy = "0.8.1"
+# Reads the native window from Slint, for the dark title bar. Already used by Slint and
+# window-vibrancy, so it adds nothing to the build.
+raw-window-handle = "0.6.2"
 
 [build-dependencies]
 slint-build = "1.18.1"

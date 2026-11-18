@@ -18,6 +18,9 @@ Tick each box when the result matches. Note anything odd with the app you used.
       single-cell logo. Hover over the tray icon shows "Grid".
 - [ ] Right-click the tray icon: Undo last snap, Save / Restore window positions, Settings,
       Check for updates, Exit.
+- [ ] The tray menu is dark when Windows (or Settings → General → Theme) is dark, light otherwise.
+- [ ] The splash, setup, uninstall and administrator windows use the Settings window's look
+      (font, colors, light/dark).
 - [ ] Double-click the tray icon opens Settings. Doing it again brings the open window to the
       front (no second window).
 - [ ] Check for updates shows the "not available yet" message.
@@ -80,7 +83,7 @@ Tick each box when the result matches. Note anything odd with the app you used.
 
 ## 6. Settings window
 
-- [ ] Opens in your light/dark mode. Appearance Light / Dark / System switches it right away.
+- [ ] Opens in your light/dark mode. General → Appearance → Theme Light / Dark / System switches it right away.
 - [ ] Save is grayed out until you change something, and grayed again if you change it back.
 - [ ] Shrinking the window stops at its minimum size; every tab scrolls so Close and Save stay
       visible. Snapping the Settings window into a small cell also can't shrink it below that.

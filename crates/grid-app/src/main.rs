@@ -50,6 +50,17 @@ fn settings_path() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("grid.json"))
 }
 
+/// The glass look of Grid's windows: light or dark like Windows, with a matching title bar.
+#[cfg(windows)]
+fn look() -> grid_settings::Look {
+    grid_settings::Look { system_dark: Some(grid_windows::system_dark), set_dark: Some(grid_windows::set_dark_window) }
+}
+
+#[cfg(not(windows))]
+fn look() -> grid_settings::Look {
+    grid_settings::Look::default()
+}
+
 /// Installing, uninstalling and the first-run setup window.
 #[cfg(windows)]
 mod setup {
@@ -81,7 +92,7 @@ mod setup {
             format!("Grid is already installed {} on this PC. Installing again replaces it with this copy.", scope_text(scope))
         });
         let shown: fn() = || grid_windows::use_app_icon(grid_windows::SETUP_TITLE);
-        match grid_settings::ask_setup(existing, Some(shown))? {
+        match grid_settings::ask_setup(existing, Some(shown), super::look())? {
             None => Ok(()),
             Some(SetupChoice::Portable) => {
                 if first_run {
@@ -139,7 +150,7 @@ mod setup {
             return install::uninstall(scope);
         }
         let shown: fn() = || grid_windows::use_app_icon(grid_windows::UNINSTALL_TITLE);
-        let Some(delete_settings) = grid_settings::ask_uninstall(&super::settings_path(), Some(shown))? else {
+        let Some(delete_settings) = grid_settings::ask_uninstall(&super::settings_path(), Some(shown), super::look())? else {
             return Ok(());
         };
         if scope == Scope::AllUsers && !install::can_write_machine() {
@@ -222,7 +233,7 @@ fn settings(path: &Path) -> Result<(), String> {
         window_shown: Some(|| {
             grid_windows::use_app_icon(grid_windows::SETTINGS_TITLE);
             // Same as min-width / min-height in settings.slint.
-            grid_windows::enforce_min_size(grid_windows::SETTINGS_TITLE, 520, 440);
+            grid_windows::enforce_min_size(grid_windows::SETTINGS_TITLE, 680, 460);
         }),
         monitors: Some(|| {
             grid_windows::monitors()
@@ -231,6 +242,7 @@ fn settings(path: &Path) -> Result<(), String> {
                 .collect()
         }),
         open_url: Some(grid_windows::open_url),
+        look: look(),
     };
     #[cfg(not(windows))]
     let platform = grid_settings::Platform::default();
@@ -306,7 +318,7 @@ fn admin_prompt(path: &Path) -> Result<(), String> {
         grid_windows::use_app_icon(grid_windows::ADMIN_PROMPT_TITLE);
         grid_windows::center_window(grid_windows::ADMIN_PROMPT_TITLE);
     };
-    let (yes, mute) = grid_settings::ask_admin_restart(path, Some(shown))?;
+    let (yes, mute) = grid_settings::ask_admin_restart(path, Some(shown), look())?;
     if yes {
         println!("yes");
     }

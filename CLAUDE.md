@@ -25,6 +25,7 @@ Notes for AI assistants and contributors. Maintainers may keep extra private not
 | License | GPLv3 (`GPL-3.0-or-later`), see `LICENSE`. Keep the `AboutSlint` widget on the About tab. |
 | Single exe | One `grid.exe` runs as the engine, `--settings` (settings window), `--capture` (press-to-bind helper) and the other modes below. Two `grid.exe` processes while Settings is open is expected. |
 | Settings UI | Slint 1.18, software renderer, Fluent style, in its own process (`grid.exe --settings`). Measured: ~34 MB working set vs 129–311 MB for GPU renderers/egui. |
+| Look | "Glass" on every Grid window, following Windows light/dark (or the Appearance setting). Slint windows (settings, setup, uninstall, admin prompt): Windows 11 Acrylic via `window-vibrancy` behind a tint (solid while inactive, as Windows does), shared in `ui/theme.slint`; dark title bar via DWM. Font: Plus Jakarta Sans (SIL OFL, `ui/fonts/`). Grid-drawn windows (`theme.rs`) draw text with `swash`, as Slint does (GDI renders this font badly at small sizes). Splash: solid card in the same colors (the overlay's blur can't follow rounded corners). Tray menu: Grid's own popup (`menu.rs`) with the system Acrylic backdrop, sized to its text, 12 px like Settings. |
 | Code signing | Not yet. |
 | Install model | Same exe can install itself (Program Files or per-user, Start menu, optional autostart) or run portably. Only installed copies can start with Windows, to steer users to installing; a portable copy removes an old Run entry pointing at itself. The installer recommends an administrator install ("for the best compatibility") but also offers a per-user install that needs no admin rights. |
 | Admin windows | Windows (UIPI) stops a normal Grid moving windows of apps run as administrator (e.g. Task Manager). When such a drag ends, Grid asks whether to restart with administrator rights (No / Yes, one popup at a time). "Don't ask again until Grid restarts" mutes it for the session; Settings → General → "Never prompt to start Grid as administrator" turns it off (`ask_to_run_as_admin`). It can't ask only when a snap is attempted: a normal Grid doesn't see input to admin windows (tested: `GetAsyncKeyState` and Raw Input with `RIDEV_INPUTSINK` both see nothing). Settings → General also has a "Restart Grid as administrator" button. Yes relaunches via UAC (`runas`, `--restarted`). |
@@ -57,7 +58,6 @@ Notes for AI assistants and contributors. Maintainers may keep extra private not
 ### Next version
 
 - Keyboard-only snapping: a hotkey shows the grid for the focused window.
-- Ignored apps list.
 - Custom zones defined to the pixel (e.g. zone 1 = left half; zones 2 and 3 = right half split
   top/bottom). When a selection spans monitors/zones of different heights, expand to cover
   the zones that match the start zone's extent. `select_span` already handles this.
