@@ -157,9 +157,13 @@ Tick each box when the result matches. Note anything odd with the app you used.
 - [ ] With nothing saved yet, tray → Restore is grayed out and the Restore hotkey says nothing
       has been saved. (Rename `positions.json` next to `grid.exe` to try, then rename it back.)
 
-## 9. Multiple monitors (still on the "test later" list)
+## 9. Multiple monitors
 
 - [ ] Resize from a cell on one monitor to a cell on the other: the window spans both.
+- [ ] Same, with monitors whose grids don't line up (different scaling, size or own grid): the
+      window's edges on the mouse's side match the cell under the mouse exactly, both left to
+      right and right to left (it doesn't overflow onto the other monitor's row lines). A brief
+      flash as the app rescales itself is expected.
 - [ ] Move a window across: it can sit half on each monitor, and the live preview matches where
       it lands. Try monitors with different scaling.
 - [ ] Settings → Grid → Monitors lists each monitor by name. Plugging one in or unplugging it

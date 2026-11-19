@@ -208,7 +208,7 @@ component HotkeyRow inherits HorizontalBox {
 
 export component SettingsWindow inherits Window {
     title: "Grid Settings";
-    preferred-width: 820px;
+    preferred-width: 720px;
     preferred-height: 600px;
     // Also enforced by the app (grid-app main.rs), so snapping can't shrink it further.
     min-width: 680px;
@@ -710,8 +710,9 @@ export component SettingsWindow inherits Window {
 
         HorizontalBox {
             padding: 0;
-            // The same space above the buttons as below them.
-            padding-top: 10px;
+            // The same space above the buttons as below them: 8 px here and the page's 8 px
+            // below, each plus the 4 px either side of the 32 px buttons in this 40 px row.
+            padding-top: 8px;
             // Bottom left, beside the buttons, with room for two lines (always reserved, so the
             // page doesn't jump when a message appears). Messages are kept short enough to fit
             // at the minimum window width. (Not `overflow: elide`: with wrapping, Slint 1.18
@@ -723,15 +724,25 @@ export component SettingsWindow inherits Window {
                 horizontal-stretch: 1;
                 height: 40px;
             }
-            Button {
-                text: "Close";
-                clicked => { root.close-requested(); }
+            // As tall as the input boxes (32 px, the style's height for both), rather than
+            // stretched to the row's 40 px, which leaves the message room for two lines.
+            VerticalLayout {
+                alignment: center;
+                Button {
+                    text: "Close";
+                    height: 32px;
+                    clicked => { root.close-requested(); }
+                }
             }
-            Button {
-                text: "Save";
-                primary: true;
-                enabled: root.dirty;
-                clicked => { root.save(); }
+            VerticalLayout {
+                alignment: center;
+                Button {
+                    text: "Save";
+                    height: 32px;
+                    primary: true;
+                    enabled: root.dirty;
+                    clicked => { root.save(); }
+                }
             }
         }
         }

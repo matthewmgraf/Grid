@@ -93,7 +93,7 @@ Cargo workspace:
 - `crates/grid-core`: platform-agnostic logic with no OS calls. Everything here is unit-tested.
   - `geometry`: `Point`, `Rect`, `Grid` (physical pixels).
   - `zones`: grid cells, cross-monitor span selection (`select_span` grows the bounding box to
-    take in zones it covers by at least half), move snapping, `apply_gaps`.
+    take in zones it covers by at least half, then puts each edge on the nearest line of the cell under the mouse's row or column, so a span across mismatched grids fits that cell), move snapping, `apply_gaps`.
   - `session`: the Resize/Move/Cancel state machine for one drag. Platform layers feed it input.
   - `startup`: the start-with-Windows checkboxes and which OS entries they mean.
   - `settings`: JSON settings model with defaults; inputs written as names like `"Space"`, `"RightMouse"`.

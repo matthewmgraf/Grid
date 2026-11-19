@@ -28,6 +28,12 @@ pub fn zone_at(zones: &[Rect], p: Point) -> Option<usize> {
 /// Starts with the bounding box of both zones, then grows to take in any zone that is at
 /// least half covered by it, until nothing changes. This lets a selection from a tall zone on
 /// one monitor pick up all the shorter zones it lines up with on another monitor.
+///
+/// Each edge then goes to the nearest grid line of the cells lined up with zone `b` (the one
+/// under the mouse): its column for the top and bottom, its row for the left and right. So when
+/// the start cell is on a monitor whose grid lines fall elsewhere (different size or scaling),
+/// the window still fits the cell under the mouse; an edge that's on the start monitor keeps
+/// that monitor's line, the nearest one. Within one grid nothing moves.
 pub fn select_span(zones: &[Rect], a: usize, b: usize) -> Rect {
     let mut span = zones[a].union(&zones[b]);
     loop {
@@ -36,10 +42,21 @@ pub fn select_span(zones: &[Rect], a: usize, b: usize) -> Rect {
             .filter(|z| z.overlap_area(&span) * 2 >= z.area())
             .fold(span, |acc, z| acc.union(z));
         if grown == span {
-            return span;
+            break;
         }
         span = grown;
     }
+    let end = zones[b];
+    // The zones in `end`'s row (for left and right edges) and column (for top and bottom).
+    let row: Vec<&Rect> = zones.iter().filter(|z| z.y < end.bottom() && end.y < z.bottom()).collect();
+    let column: Vec<&Rect> = zones.iter().filter(|z| z.x < end.right() && end.x < z.right()).collect();
+    let nearest = |lines: &mut dyn Iterator<Item = i32>, v: i32| lines.min_by_key(|l| (l - v).abs()).unwrap_or(v);
+    let left = nearest(&mut row.iter().map(|z| z.x), span.x);
+    let right = nearest(&mut row.iter().map(|z| z.right()), span.right());
+    let top = nearest(&mut column.iter().map(|z| z.y), span.y);
+    let bottom = nearest(&mut column.iter().map(|z| z.bottom()), span.bottom());
+    // Never smaller than the cell under the mouse.
+    Rect::new(left, top, right - left, bottom - top).union(&end)
 }
 
 /// `window` fitted to the grid: each edge moves to the nearest zone edge, so the window fills
@@ -171,6 +188,22 @@ mod tests {
         // Top-right cell of the left monitor to top-left cell of the right monitor.
         let span = select_span(&zones, 7, b);
         assert_eq!(span, Rect::new(1680, 0, 560, 180));
+    }
+
+    #[test]
+    fn span_ends_on_the_grid_under_the_mouse() {
+        // Side by side, with rows that don't line up: 1920×1080 at 6 rows (180 px) and, to its
+        // right, 1920×1080 at 7 rows (about 154 px). From the left monitor's 4th row (540–720) to
+        // the right monitor's 5th row (617–771): the window's top and bottom follow the right
+        // monitor's lines (the cell under the mouse), not the left monitor's 720.
+        let mut zones = grid_zones(Rect::new(0, 0, 1920, 1080), Grid { cols: 4, rows: 6 }, false);
+        let b = zones.len();
+        zones.extend(grid_zones(Rect::new(1920, 0, 1920, 1080), Grid { cols: 4, rows: 7 }, false));
+        let end = b + 4 * 4; // right monitor, row 5 (index 4), first column
+        let span = select_span(&zones, 3 * 4 + 3, end); // left monitor, row 4 (index 3), last column
+        assert_eq!((span.bottom(), span.right()), (zones[end].bottom(), zones[end].right()));
+        assert_eq!(span.x, zones[3 * 4 + 3].x);
+        assert!(span.y == zones[end].y || zones.iter().any(|z| z.y == span.y && z.x >= 1920));
     }
 
     #[test]
