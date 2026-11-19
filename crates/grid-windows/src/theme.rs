@@ -105,20 +105,27 @@ pub fn fill_rounded(pixels: &mut [u32], w: i32, r: RECT, radius: f32, color: u32
     }
 }
 
+thread_local! {
+    /// swash's working state for laying out and drawing text, kept between calls: setting it up
+    /// allocates, and the tray menu draws its items again on every hover change.
+    static SHAPE: std::cell::RefCell<swash::shape::ShapeContext> = std::cell::RefCell::new(swash::shape::ShapeContext::new());
+    static SCALE: std::cell::RefCell<swash::scale::ScaleContext> = std::cell::RefCell::new(swash::scale::ScaleContext::new());
+}
 
 /// The glyphs of `text` with their x positions (kerned), and the width of the whole line.
 fn shape(text: &str, size: f32, weight: f32) -> (Vec<(swash::GlyphId, f32)>, f32) {
     let mut glyphs = Vec::new();
     let mut pen = 0.0;
     let Some(font) = swash::FontRef::from_index(FONT, 0) else { return (glyphs, pen) };
-    let mut context = swash::shape::ShapeContext::new();
-    let mut shaper = context.builder(font).size(size).variations(&[("wght", weight)]).build();
-    shaper.add_str(text);
-    shaper.shape_with(|cluster| {
-        for g in cluster.glyphs {
-            glyphs.push((g.id, pen + g.x));
-            pen += g.advance;
-        }
+    SHAPE.with_borrow_mut(|context| {
+        let mut shaper = context.builder(font).size(size).variations(&[("wght", weight)]).build();
+        shaper.add_str(text);
+        shaper.shape_with(|cluster| {
+            for g in cluster.glyphs {
+                glyphs.push((g.id, pen + g.x));
+                pen += g.advance;
+            }
+        });
     });
     (glyphs, pen)
 }
@@ -144,7 +151,7 @@ pub enum Align {
 #[allow(clippy::too_many_arguments)]
 pub fn draw_text(pixels: &mut [u32], w: i32, text: &str, x: f32, center_y: f32, align: Align, size: f32, weight: f32, color: u32, alpha: f32) {
     use swash::FontRef;
-    use swash::scale::{Render, ScaleContext, Source};
+    use swash::scale::{Render, Source};
     use swash::zeno::{Format, Vector};
 
     let Some(font) = FontRef::from_index(FONT, 0) else { return };
@@ -155,28 +162,29 @@ pub fn draw_text(pixels: &mut [u32], w: i32, text: &str, x: f32, center_y: f32, 
     let metrics = font.metrics(&[]).scale(size);
     let baseline = (center_y + (metrics.ascent - metrics.descent) / 2.0).round() as i32;
 
-    let mut scale = ScaleContext::new();
-    let mut scaler = scale.builder(font).size(size).hint(false).variations(&variations).build();
-    for (id, gx) in glyphs {
-        let gx = left + gx;
-        let Some(image) = Render::new(&[Source::Outline])
-            .format(Format::Alpha)
-            .offset(Vector::new(gx.fract(), 0.0))
-            .render(&mut scaler, id)
-        else {
-            continue;
-        };
-        let p = image.placement;
-        let (x0, y0) = (gx.floor() as i32 + p.left, baseline - p.top);
-        for row in 0..p.height as i32 {
-            for col in 0..p.width as i32 {
-                let (px, py) = (x0 + col, y0 + row);
-                let cover = image.data[(row * p.width as i32 + col) as usize];
-                if cover > 0 && (0..w).contains(&px) && (0..h).contains(&py) {
-                    let d = &mut pixels[(py * w + px) as usize];
-                    *d = over(premultiply(color, alpha * cover as f32 / 255.0), *d);
+    SCALE.with_borrow_mut(|scale| {
+        let mut scaler = scale.builder(font).size(size).hint(false).variations(&variations).build();
+        for (id, gx) in glyphs {
+            let gx = left + gx;
+            let Some(image) = Render::new(&[Source::Outline])
+                .format(Format::Alpha)
+                .offset(Vector::new(gx.fract(), 0.0))
+                .render(&mut scaler, id)
+            else {
+                continue;
+            };
+            let p = image.placement;
+            let (x0, y0) = (gx.floor() as i32 + p.left, baseline - p.top);
+            for row in 0..p.height as i32 {
+                for col in 0..p.width as i32 {
+                    let (px, py) = (x0 + col, y0 + row);
+                    let cover = image.data[(row * p.width as i32 + col) as usize];
+                    if cover > 0 && (0..w).contains(&px) && (0..h).contains(&py) {
+                        let d = &mut pixels[(py * w + px) as usize];
+                        *d = over(premultiply(color, alpha * cover as f32 / 255.0), *d);
+                    }
                 }
             }
         }
-    }
+    });
 }

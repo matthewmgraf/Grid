@@ -35,6 +35,22 @@ pub fn check(interactive: bool, silent: bool, engine: usize) {
             return;
         }
     };
+    // Not as administrator from a folder the user can change (see `elevated_outside_program_files`):
+    // Grid restarts without administrator rights, and that Grid installs the update.
+    if elevated_outside_program_files() {
+        let restart = crate::ask_yes_no(
+            "Grid update",
+            &format!(
+                "Grid {} is available (you have {VERSION}). To install it, Grid restarts without \
+                 administrator rights first. Restart and update now?\n\nWhat's new: {}",
+                release.version, release.page_url
+            ),
+        );
+        if restart {
+            restart_unelevated_to_update(engine);
+        }
+        return;
+    }
     let go = (silent && !interactive)
         || crate::ask_yes_no(
             "Grid update",
@@ -55,6 +71,35 @@ pub fn check(interactive: bool, silent: bool, engine: usize) {
         }
         Err(e) => crate::show_message("Grid", &format!("Couldn't install the update: {e}"), true),
     }
+}
+
+/// Left next to the settings by `restart_unelevated_to_update`: the next Grid to start installs the
+/// latest update straight away (the user already agreed). Only ever leads to installing a signed
+/// release, so it doesn't matter who can create it.
+pub const UPDATE_PENDING: &str = "grid-update-pending";
+
+/// Restarts Grid without administrator rights to install an update: leaves `UPDATE_PENDING`,
+/// starts grid.exe through Explorer (so as the user, see `open_unelevated`) and exits. The new
+/// Grid waits for this one to close, then installs the update.
+fn restart_unelevated_to_update(engine: usize) {
+    let marker = install::settings_path().with_file_name(UPDATE_PENDING);
+    let started = crate::safe_file::write(&marker, b"1").is_ok()
+        && std::env::current_exe().is_ok_and(|exe| crate::ui::open_unelevated(&exe.to_string_lossy()));
+    if started {
+        unsafe { PostMessageW(engine as _, RegisterWindowMessageW(wide(install::EXIT_MESSAGE).as_ptr()), 0, 0) };
+    } else {
+        let _ = std::fs::remove_file(&marker);
+        crate::show_message("Grid", "Grid couldn't restart itself. Exit Grid, start it again normally, and check for updates.", true);
+    }
+}
+
+/// Whether Grid runs as administrator from a folder the user can change (portable, or installed
+/// just for them). Updating then renames and deletes files there with administrator rights, which
+/// a program running as the user could redirect onto other files (e.g. to delete any file). So
+/// Grid doesn't update itself that way; installs for all users (Program Files, which only
+/// administrators can change) update as usual.
+fn elevated_outside_program_files() -> bool {
+    crate::elevation::is_self_elevated() && install::current_scope() != Some(install::Scope::AllUsers)
 }
 
 /// The latest release on GitHub, if it is newer than this build.
@@ -82,6 +127,9 @@ fn latest_release() -> Result<Release, String> {
 /// Puts `release` in place of this exe, asking Windows for administrator rights when the folder
 /// needs them (an install for all users, in Program Files). Returns the exe to start.
 fn install_release(release: &Release) -> Result<PathBuf, String> {
+    if elevated_outside_program_files() {
+        return Err("Grid is running as administrator from a folder you can change; start it normally to update.".into());
+    }
     let target = std::env::current_exe().map_err(|e| e.to_string())?;
     if install::current_scope() == Some(install::Scope::AllUsers) && !crate::elevation::is_self_elevated() {
         // The administrator copy downloads and checks the file itself, rather than taking one
@@ -104,6 +152,14 @@ fn download_and_replace(release: &Release, target: &Path) -> Result<(), String> 
     if bytes.len() as u64 != release.size || !bytes.starts_with(b"MZ") {
         return Err("the download was incomplete or not a program.".into());
     }
+    // Signed with Grid's release key, together with the version (see `signature` and
+    // `signed_data`): checked before anything is swapped in.
+    let url = release.signature_url.as_deref().ok_or("this release isn't signed, so Grid won't install it.")?;
+    let signature = fetch(url, "application/octet-stream")?;
+    let signed = grid_core::update::signed_data(&release.version, &bytes);
+    if !crate::signature::verify(&crate::signature::RELEASE_KEY, &signed, &signature) {
+        return Err("the download's signature doesn't match Grid's release key, so it wasn't installed.".into());
+    }
     let staged = target.with_file_name(install::NEW_EXE);
     std::fs::write(&staged, &bytes).map_err(|e| format!("couldn't save the download: {e}"))?;
     let result = install::replace_exe(&staged, target);
@@ -113,11 +169,16 @@ fn download_and_replace(release: &Release, target: &Path) -> Result<(), String> 
 
 /// The release's `grid.exe`.
 fn download(release: &Release) -> Result<Vec<u8>, String> {
+    fetch(&release.download_url, "application/octet-stream")
+}
+
+/// Downloads `url` (in debug builds, also a local test file, see `test_release`).
+fn fetch(url: &str, accept: &str) -> Result<Vec<u8>, String> {
     #[cfg(debug_assertions)]
-    if let Some(path) = release.download_url.strip_prefix(TEST_PREFIX) {
+    if let Some(path) = url.strip_prefix(TEST_PREFIX) {
         return std::fs::read(path).map_err(|e| format!("couldn't read {path}: {e}"));
     }
-    let (status, bytes) = get(&release.download_url, "application/octet-stream")?;
+    let (status, bytes) = get(url, accept)?;
     if status != 200 {
         return Err(format!("the download failed (status {status})."));
     }
@@ -125,7 +186,8 @@ fn download(release: &Release) -> Result<Vec<u8>, String> {
 }
 
 /// Debug builds only: with `GRID_TEST_UPDATE` set to the path of a `grid.exe`, "Check for
-/// updates" offers that file as a new version, so updating can be tried without a release.
+/// updates" offers that file as a new version, so updating can be tried without a release. Its
+/// signature is read from the same path plus `.sig` (`tools/sign-release.ps1` makes one).
 #[cfg(debug_assertions)]
 const TEST_PREFIX: &str = "test-file:";
 
@@ -133,7 +195,13 @@ const TEST_PREFIX: &str = "test-file:";
 fn test_release() -> Option<Release> {
     let path = std::env::var("GRID_TEST_UPDATE").ok()?;
     let size = std::fs::metadata(&path).ok()?.len();
-    Some(Release { version: "test".into(), download_url: format!("{TEST_PREFIX}{path}"), size, page_url: path })
+    Some(Release {
+        version: "test".into(),
+        download_url: format!("{TEST_PREFIX}{path}"),
+        size,
+        signature_url: Some(format!("{TEST_PREFIX}{path}.sig")),
+        page_url: path,
+    })
 }
 
 /// `--apply-update <version>`, run as administrator for an all-users install: downloads the

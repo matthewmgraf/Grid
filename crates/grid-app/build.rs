@@ -13,6 +13,14 @@ fn main() {
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
         return;
     }
+    // The DLLs grid.exe imports are loaded from System32 only, never from the exe's own folder:
+    // a downloaded grid.exe runs from e.g. Downloads, also as administrator (installing), and a
+    // DLL with the same name planted there would run with those rights. (0x800 is
+    // LOAD_LIBRARY_SEARCH_SYSTEM32; DLLs loaded later are covered by
+    // `grid_windows::load_dlls_from_system32` at startup.)
+    if std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {
+        println!("cargo:rustc-link-arg-bins=/DEPENDENTLOADFLAG:0x800");
+    }
     let out = std::env::var("OUT_DIR").expect("OUT_DIR is set by Cargo");
     let ico = Path::new(&out).join("grid.ico");
     std::fs::write(&ico, ico_file()).expect("write grid.ico");

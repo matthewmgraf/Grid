@@ -68,6 +68,9 @@ Tick each box when the result matches. Note anything odd with the app you used.
 - [ ] With Grid not elevated, drag Task Manager and press Space: nothing moves. When you let go,
       a popup asks to restart Grid as administrator, centered on the monitor with the mouse
       pointer. Its text, "Don't ask again until Grid restarts" and No/Yes fit.
+- [ ] Its tip below the checkbox: installed for all users with "Start as administrator" off, it
+      points to that checkbox; installed for one user or portable, it suggests installing for all
+      users. Both also say where to turn the question off.
 - [ ] No closes it. Dragging Task Manager again asks again (never two popups at once).
 - [ ] Tick "Don't ask again until Grid restarts", No: further drags don't ask. Exit Grid and
       start it again: it asks again.
@@ -211,6 +214,33 @@ folder in Downloads) and run it from there.
 - [ ] Repeat with **Install for all users**: Windows asks for administrator rights; Grid ends
       up in `C:\Program Files\Grid` and runs as a normal (non-administrator) process.
       Uninstall from Settings → General → "Uninstall Grid…" also works (with Windows' prompt).
+- [ ] The setup window has the same start options under "Start Grid when Windows starts" (the
+      administrator ones only for administrator accounts). With "Install for all users" they're
+      set with the install, under one Windows prompt; "Install just for me" uses only the top box.
+- [ ] Run setup again with Grid installed: the start options are ticked as they are now (e.g.
+      "As administrator"), so reinstalling without changing them keeps them.
+- [ ] Installing with "As administrator" (or "For all administrators") ticked: Grid starts as
+      administrator straight away (`grid.log`: "administrator"), and Settings → General shows
+      those boxes ticked, including from a normal (non-administrator) Grid.
+- [ ] All-users install only: under "Start Grid when Windows starts" are "For all users on this
+      PC" and "As administrator" with "For all administrators on this PC" under it (not for
+      per-user or portable copies; a standard user sees only "For all users"). Changing any
+      but the top one shows Windows' prompt; declining puts the boxes back with a message.
+- [ ] **As administrator**: Task Scheduler lists "Grid - start as administrator (DOMAIN user)", and
+      Task Manager → Startup apps no longer lists Grid for you. Sign out and in: Grid starts once,
+      as administrator (`grid.log`: "administrator"), and Task Manager snaps with no prompt.
+- [ ] **For all users**: another account signing in gets Grid (normal) with no setup. With "As
+      administrator" also on for you, your sign-in still starts only one Grid, the administrator one.
+- [ ] **For all administrators**: Task Scheduler lists "Grid - start as administrator (all
+      administrators)" and your own task is gone. Another administrator account gets Grid as
+      administrator at sign-in; a standard account doesn't (or gets the normal one with "For all
+      users").
+- [ ] With "For all users" on, unticking "Start Grid when Windows starts" (no prompt) skips Grid for
+      you only (`grid.log`: "Not started at sign-in: this user turned off starting with Windows");
+      other accounts still get it. A standard account changing its boxes (with an administrator's
+      password) leaves "For all administrators" as it was. Uninstalling removes the entries,
+      tasks and `HKLM\Software\Grid`.
+- [ ] Declining Windows' prompt in setup leaves the running Grid running.
 - [ ] Installing while an installed Grid is running (run the downloaded copy again after
       deleting its `grid.json`): the setup window says Grid is already installed; installing
       replaces it and Grid restarts.
@@ -223,7 +253,15 @@ folder in Downloads) and run it from there.
       Yes downloads it, replaces grid.exe and restarts Grid; About shows the new version.
       grid.exe.old stays next to it until Grid's next normal start, which deletes it. No
       antivirus alert at either step. (Without a release: a debug build started with
-      `GRID_TEST_UPDATE=<path to a grid.exe>` offers that file instead.)
+      `GRID_TEST_UPDATE=<path to a grid.exe>` offers that file instead, as version
+      `test`; sign it first with `tools\sign-release.ps1 -Exe <that path> -Version test`.)
+- [ ] Grid running as administrator from a portable or per-user copy: Check for updates offers to
+      restart without administrator rights. Yes: Grid restarts (normal user in `grid.log`), installs
+      the update without asking again and restarts on the new version. No: nothing changes.
+- [ ] A release without `grid.exe.sig`, or with one from another key, isn't installed: Grid says
+      the update isn't signed or the signature doesn't match, and keeps running the old version.
+- [ ] From an elevated Grid, Settings → About's links open in the browser as you (Task Manager:
+      the browser isn't elevated).
 - [ ] With the latest version already running: "You have the latest version of Grid".
 - [ ] Settings → General → Updates: with "Check for updates when Grid starts" on, a newer
       release is offered right after Grid starts; with "Install updates without asking" on, it

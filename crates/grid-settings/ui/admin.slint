@@ -21,6 +21,9 @@ export component AdminPrompt inherits Window {
     out property <bool> dark: Glass.dark;
     callback dark-changed(bool);
     in property <image> logo;
+    /// The small print below the checkbox: where to make Grid start as administrator, or turn
+    /// this question off.
+    in property <string> hint: "To turn this question off for good, see Settings → General.";
     in-out property <bool> dont-ask;
     callback answered(bool);
 
@@ -56,7 +59,7 @@ export component AdminPrompt inherits Window {
             checked <=> root.dont-ask;
         }
         Text {
-            text: "To turn this question off for good, see Settings → General.";
+            text: root.hint;
             wrap: word-wrap;
             width: 420px;
             font-size: 12px;

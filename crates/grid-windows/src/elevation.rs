@@ -22,6 +22,25 @@ pub fn is_self_elevated() -> bool {
     token_elevated(unsafe { GetCurrentProcess() }) == Some(true)
 }
 
+/// Whether the signed-in user's account is an administrator: it can run things as administrator
+/// by saying yes to Windows' prompt (or Grid already runs that way).
+pub fn user_is_admin() -> bool {
+    use windows_sys::Win32::Security::{TOKEN_ELEVATION_TYPE, TokenElevationType, TokenElevationTypeFull, TokenElevationTypeLimited};
+    let mut token: HANDLE = null_mut();
+    if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) } == 0 {
+        return false;
+    }
+    let mut kind: TOKEN_ELEVATION_TYPE = 0;
+    let mut len = 0;
+    let ok = unsafe {
+        GetTokenInformation(token, TokenElevationType, (&mut kind as *mut TOKEN_ELEVATION_TYPE).cast(), size_of::<TOKEN_ELEVATION_TYPE>() as u32, &mut len)
+    };
+    unsafe { CloseHandle(token) };
+    // "Limited": an administrator running without those rights for now; "Full": with them. A
+    // "default" token is a standard user, or an administrator with UAC turned off (elevated).
+    (ok != 0 && (kind == TokenElevationTypeLimited || kind == TokenElevationTypeFull)) || is_self_elevated()
+}
+
 /// Whether the app that owns `hwnd` runs as administrator. `None` if that can't be checked.
 pub fn is_window_elevated(hwnd: HWND) -> Option<bool> {
     let mut pid = 0;

@@ -1545,7 +1545,7 @@ checksum = "b40ca9252762c466af32d0b1002e91e4e1bc5398f77455e55474deb466355ff5"
 
 [[package]]
 name = "grid-app"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "embed-resource",
  "grid-core",
@@ -1555,7 +1555,7 @@ dependencies = [
 
 [[package]]
 name = "grid-core"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -1563,7 +1563,7 @@ dependencies = [
 
 [[package]]
 name = "grid-settings"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "grid-core",
  "raw-window-handle",
@@ -1574,7 +1574,7 @@ dependencies = [
 
 [[package]]
 name = "grid-windows"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "grid-core",
  "swash",

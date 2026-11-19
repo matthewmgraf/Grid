@@ -7,6 +7,7 @@ use std::rc::Rc;
 use grid_core::geometry::{Grid, Rect};
 use grid_core::session::Command;
 use grid_core::settings::{Appearance, Binding, Color, Gaps, Hotkey, Input, MAX_GAP, MonitorGrid, Overlay, Settings};
+use grid_core::startup::Startup;
 use slint::{Model, SharedString, VecModel};
 
 slint::include_modules!();
@@ -43,8 +44,17 @@ pub struct Installation {
     pub install: fn(),
     /// Starts uninstalling in another process (it asks first).
     pub uninstall: fn(),
-    pub autostart: fn() -> bool,
-    pub set_autostart: fn(bool) -> Result<(), String>,
+    /// How Grid starts with the OS, as things are.
+    pub startup: fn() -> Startup,
+    /// Changes it, asking the OS for administrator rights first where needed, and returns how it
+    /// is now.
+    pub set_startup: fn(Startup) -> Result<Startup, String>,
+    /// Whether the "for all users" and administrator options are offered (e.g. only when
+    /// installed for all users).
+    pub machine_startup: fn() -> bool,
+    /// Whether the signed-in user's account is an administrator (the administrator options are
+    /// hidden for others).
+    pub user_is_admin: fn() -> bool,
 }
 
 /// Running the engine as administrator, for the General tab.
@@ -58,7 +68,8 @@ pub struct Admin {
 /// What the user chose in the setup window.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SetupChoice {
-    Install { all_users: bool, autostart: bool },
+    /// `startup`: how to start with the OS. Only `me` applies when not installing for all users.
+    Install { all_users: bool, startup: Startup },
     /// Run from this folder. Portable copies can't start with Windows.
     Portable,
 }
@@ -234,20 +245,30 @@ pub fn run(path: &Path, platform: Platform) -> Result<(), String> {
         ui.set_install_available(true);
         ui.set_install_status((inst.status)().into());
         ui.set_installed((inst.installed)());
-        ui.set_autostart((inst.autostart)());
-        let (install, uninstall, set_autostart, autostart) = (inst.install, inst.uninstall, inst.set_autostart, inst.autostart);
+        let (install, uninstall, startup, set_startup) = (inst.install, inst.uninstall, inst.startup, inst.set_startup);
+        let machine = (inst.machine_startup)();
+        ui.set_all_users_startup_available(machine);
+        ui.set_admin_startup_available(machine && (inst.user_is_admin)());
+        // Shown once read, so the window doesn't wait for it.
+        startup_in_background(&ui.as_weak(), move || (startup(), String::new()));
         ui.on_install_clicked(install);
         ui.on_uninstall_clicked(uninstall);
         let weak = ui.as_weak();
-        ui.on_autostart_changed(move |on| {
+        ui.on_startup_changed(move || {
             let Some(ui) = weak.upgrade() else { return };
-            let status = match set_autostart(on) {
-                Ok(()) if on => "Grid will start with Windows (no need to Save).".to_string(),
-                Ok(()) => "Grid won't start with Windows (no need to Save).".to_string(),
-                Err(e) => e,
+            let to = Startup {
+                me: ui.get_autostart(),
+                all_users: ui.get_autostart_all_users(),
+                admin: ui.get_autostart_admin(),
+                all_admins: ui.get_autostart_all_admins(),
             };
-            ui.set_status(status.into());
-            ui.set_autostart(autostart());
+            let ok = startup_message(SHOWN_STARTUP.get(), to);
+            ui.set_status("Working…".into());
+            startup_in_background(&weak, move || match set_startup(to) {
+                Ok(now) => (now, ok.to_string()),
+                // Refused or failed: show how things really are.
+                Err(e) => (startup(), e),
+            });
         });
     }
 
@@ -491,6 +512,50 @@ pub fn run(path: &Path, platform: Platform) -> Result<(), String> {
         slint::Timer::single_shot(std::time::Duration::from_millis(50), shown);
     }
     ui.run().map_err(|e| e.to_string())
+}
+
+/// What the status line says after changing how Grid starts with the OS from `from` to `to`.
+fn startup_message(from: Startup, to: Startup) -> &'static str {
+    if to.admin && !from.admin {
+        "Grid will start as administrator from your next sign-in (no need to Save). To use it now, click \"Restart Grid as administrator\"."
+    } else if !to.me {
+        "Grid won't start with Windows for you (no need to Save)."
+    } else if from.admin && !to.admin {
+        "Grid will start without administrator rights from your next sign-in (no need to Save)."
+    } else {
+        "Grid will start with Windows as chosen (no need to Save)."
+    }
+}
+
+thread_local! {
+    /// The start-with-the-OS options as last read or set (for the status message after a change).
+    static SHOWN_STARTUP: std::cell::Cell<Startup> = const {
+        std::cell::Cell::new(Startup { me: false, all_users: false, admin: false, all_admins: false })
+    };
+}
+
+/// Runs `work` on another thread, since it asks the OS (and maybe the user, for administrator
+/// rights), which would freeze the window meanwhile. Then shows the start options it returns,
+/// and its status message if not empty. The checkboxes are disabled until then.
+fn startup_in_background(weak: &slint::Weak<SettingsWindow>, work: impl FnOnce() -> (Startup, String) + Send + 'static) {
+    if let Some(ui) = weak.upgrade() {
+        ui.set_install_busy(true);
+    }
+    let weak = weak.clone();
+    std::thread::spawn(move || {
+        let (startup, status) = work();
+        let _ = weak.upgrade_in_event_loop(move |ui| {
+            SHOWN_STARTUP.set(startup);
+            ui.set_autostart(startup.me);
+            ui.set_autostart_all_users(startup.all_users);
+            ui.set_autostart_admin(startup.admin);
+            ui.set_autostart_all_admins(startup.all_admins);
+            if !status.is_empty() {
+                ui.set_status(status.into());
+            }
+            ui.set_install_busy(false);
+        });
+    });
 }
 
 /// Puts a frosted-glass backdrop (blurred desktop) behind `window`: Acrylic on Windows 11,
@@ -754,12 +819,26 @@ fn read_form(ui: &SettingsWindow, original: &Settings, monitors: &[Monitor]) -> 
 
 /// Asks whether to restart Grid as administrator, after it failed to move an elevated app's
 /// window. Returns (Yes, "Don't ask again until Grid restarts"); closing the window counts as No.
-pub fn ask_admin_restart(path: &Path, window_shown: Option<fn()>, look: Look) -> Result<(bool, bool), String> {
+/// `admin_autostart` says whether Grid can start as administrator with the OS (`None`: not this
+/// copy, e.g. not installed for all users) and whether it already does, for a tip about it.
+pub fn ask_admin_restart(
+    path: &Path,
+    window_shown: Option<fn()>,
+    look: Look,
+    admin_autostart: Option<bool>,
+) -> Result<(bool, bool), String> {
     let (settings, _) = Settings::load(path);
     let ui = AdminPrompt::new().map_err(|e| e.to_string())?;
     ui.set_appearance(appearance_name(settings.appearance).into());
     use_look(&ui, look);
     sharp_logo(&ui, DIALOG_LOGO, AdminPrompt::set_logo);
+    let off = "To turn this question off for good, see Settings → General.";
+    let hint = match admin_autostart {
+        Some(false) => format!("Tip: tick \"Start as administrator\" in Settings → General, and Grid will start with these rights every time you sign in. {off}"),
+        None => format!("Tip: install Grid for all users, and it can start with these rights every time you sign in. {off}"),
+        Some(true) => off.to_string(),
+    };
+    ui.set_hint(hint.into());
     let answer = Rc::new(std::cell::Cell::new(false));
     ui.on_answered({
         let answer = answer.clone();
@@ -776,20 +855,45 @@ pub fn ask_admin_restart(path: &Path, window_shown: Option<fn()>, look: Look) ->
 }
 
 /// Shows the setup window: install for all users, for this user, or run portably. `existing` is
-/// shown above the choices (e.g. that Grid is already installed). `None` if canceled.
-pub fn ask_setup(existing: Option<String>, window_shown: Option<fn()>, look: Look) -> Result<Option<SetupChoice>, String> {
+/// shown above the choices (e.g. that Grid is already installed). `user_is_admin`: whether to
+/// offer the administrator start options. `startup`: the installed Grid's start options, to
+/// tick to begin with (`None`: not installed, so the defaults). `None` if canceled.
+pub fn ask_setup(
+    existing: Option<String>,
+    window_shown: Option<fn()>,
+    look: Look,
+    user_is_admin: bool,
+    startup: Option<Startup>,
+) -> Result<Option<SetupChoice>, String> {
     let ui = SetupWindow::new().map_err(|e| e.to_string())?;
     use_look(&ui, look);
     sharp_logo(&ui, SETUP_LOGO, SetupWindow::set_logo);
     ui.set_existing(existing.unwrap_or_default().into());
+    ui.set_user_is_admin(user_is_admin);
+    if let Some(s) = startup {
+        ui.set_autostart(s.me);
+        ui.set_autostart_all_users(s.all_users);
+        ui.set_autostart_admin(s.admin);
+        ui.set_autostart_all_admins(s.all_admins);
+    }
     let answer = Rc::new(std::cell::Cell::new(None));
     ui.on_chosen({
         let (answer, weak) = (answer.clone(), ui.as_weak());
         move |which| {
-            let autostart = weak.upgrade().is_some_and(|ui| ui.get_autostart());
+            let Some(ui) = weak.upgrade() else { return };
+            let all = Startup {
+                me: ui.get_autostart(),
+                all_users: ui.get_autostart_all_users(),
+                // Kept even where hidden (a standard account), so reinstalling doesn't turn off
+                // what an administrator set up.
+                admin: ui.get_autostart_admin(),
+                all_admins: ui.get_autostart_all_admins(),
+            };
+            // The other options need an all-users install.
+            let mine = Startup { me: all.me, ..Startup::default() };
             answer.set(match which.as_str() {
-                "all" => Some(SetupChoice::Install { all_users: true, autostart }),
-                "user" => Some(SetupChoice::Install { all_users: false, autostart }),
+                "all" => Some(SetupChoice::Install { all_users: true, startup: all }),
+                "user" => Some(SetupChoice::Install { all_users: false, startup: mine }),
                 _ => Some(SetupChoice::Portable),
             });
             let _ = slint::quit_event_loop();

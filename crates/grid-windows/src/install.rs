@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use std::ptr::{null, null_mut};
 use std::time::{Duration, Instant};
 
+use grid_core::startup::{Entries, Startup};
 use windows_sys::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
 use windows_sys::Win32::System::Com::{CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx};
 use windows_sys::Win32::System::Registry::{
@@ -154,6 +155,21 @@ pub fn replace_exe(new_exe: &Path, target: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Waits up to `timeout` for a Grid engine to be running. Returns whether one is.
+pub fn wait_for_engine(timeout: Duration) -> bool {
+    let class = wide(MESSAGE_CLASS);
+    let start = Instant::now();
+    loop {
+        if !unsafe { FindWindowW(class.as_ptr(), null()) }.is_null() {
+            return true;
+        }
+        if start.elapsed() >= timeout {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
 /// Asks any running Grid engine to exit and waits (up to a few seconds) until it has.
 pub fn close_running_engine() {
     unsafe {
@@ -191,10 +207,10 @@ pub fn install_files(scope: Scope) -> Result<PathBuf, String> {
     Ok(target)
 }
 
-/// The per-user parts of installing, done without administrator rights: start with Windows,
-/// and settings carried over from the portable copy that did the installing.
-pub fn finish_install(installed_exe: &Path, autostart: bool) {
-    let _ = set_autostart_for(installed_exe, autostart);
+/// The per-user parts of installing, done without administrator rights: this user's start with
+/// Windows (`startup`), and settings carried over from the portable copy that did the installing.
+pub fn finish_install(installed_exe: &Path, startup: Entries) {
+    let _ = set_user_startup(installed_exe, startup);
     let portable = std::env::current_exe().ok().and_then(|e| e.parent().map(Path::to_path_buf));
     if let (Some(from), Some(to)) = (portable, data_dir()) {
         let _ = std::fs::create_dir_all(&to);
@@ -243,10 +259,17 @@ pub fn run_elevated_and_wait(args: &str) -> Result<bool, String> {
 }
 
 /// Removes an installed Grid: the Start menu shortcut, the Apps & features entry, starting with
-/// Windows, and the program folder. Settings in `%APPDATA%\Grid` are kept (see `delete_settings`).
-pub fn uninstall(scope: Scope) -> Result<(), String> {
+/// Windows (including `user`'s administrator task), and the program folder. Settings in
+/// `%APPDATA%\Grid` are kept (see `delete_settings`).
+pub fn uninstall(scope: Scope, user: &str) -> Result<(), String> {
     close_running_engine();
-    let _ = set_autostart_for(Path::new(""), false);
+    remove_user_startup();
+    // Needs administrator rights, which an all-users uninstall has (the only kind with these).
+    if scope == Scope::AllUsers {
+        let _ = set_machine_startup(Entries::default(), user);
+        let key = wide(GRID_KEY);
+        unsafe { RegDeleteTreeW(HKEY_LOCAL_MACHINE, key.as_ptr()) };
+    }
     if let Some(link) = shortcut_path(scope) {
         let _ = std::fs::remove_file(link);
     }
@@ -284,20 +307,257 @@ pub fn delete_settings() {
     }
 }
 
-/// Whether Grid starts with Windows (for this user). Always false for a portable copy, which
-/// can't (see `set_autostart`).
-pub fn autostart() -> bool {
-    current_scope().is_some() && read_string(HKEY_CURRENT_USER, RUN_KEY, RUN_VALUE).is_some()
+/// Flag for Grid started at sign-in: it quits quietly if Grid is already running, this user opted
+/// out, or an administrator task starts one for this user too (see `Entries::quits_at_sign_in`).
+pub const AUTOSTART: &str = "--autostart";
+/// Flag for the administrator half of `set_startup`.
+pub const STARTUP: &str = "--startup";
+
+/// Starting as administrator is a Task Scheduler task: Windows starts Run-key entries without
+/// administrator rights. These tasks start grid.exe with full rights without asking, so they
+/// (and the all-users entry) are only offered for all-users installs, whose exe only
+/// administrators can change.
+const USER_TASK: &str = "Grid - start as administrator";
+const ADMINS_TASK: &str = "Grid - start as administrator (all administrators)";
+/// The local Administrators group.
+const ADMINISTRATORS_SID: &str = "S-1-5-32-544";
+/// Grid's own registry key, in HKLM (machine-wide) and HKCU (this user).
+const GRID_KEY: &str = r"Software\Grid";
+/// HKLM: the all-administrators task exists. Recorded for reading without administrator rights:
+/// a normal process of an administrator account has the Administrators group turned off, so
+/// Task Scheduler won't show it that group's task. Everyone can read HKLM.
+const ADMINS_TASK_VALUE: &str = "StartAsAdministratorForAll";
+/// HKCU: this user skips the all-users entry and the all-administrators task at sign-in.
+const OPT_OUT_VALUE: &str = "SkipStartAtSignIn";
+
+/// The signed-in user as `DOMAIN\name`, for their administrator task.
+pub fn current_user() -> String {
+    let var = |name| std::env::var(name).unwrap_or_default();
+    format!("{}\\{}", var("USERDOMAIN"), var("USERNAME"))
 }
 
-/// Turns starting with Windows on or off, for this exe. Only for installed copies: a portable
-/// copy can't start with Windows (users are pointed to installing instead).
-pub fn set_autostart(on: bool) -> Result<(), String> {
-    if on && current_scope().is_none() {
+/// One task per user (a backslash in a task name would mean a folder).
+fn user_task_name(user: &str) -> String {
+    format!("{USER_TASK} ({})", user.replace('\\', " "))
+}
+
+/// Runs schtasks.exe without a window. `Err` has its message if it failed.
+fn schtasks(args: &[&str]) -> Result<(), String> {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let out = std::process::Command::new("schtasks.exe")
+        .args(args)
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .map_err(|e| format!("Could not run schtasks: {e}"))?;
+    if out.status.success() { Ok(()) } else { Err(String::from_utf8_lossy(&out.stderr).trim().to_string()) }
+}
+
+fn task_exists(name: &str) -> bool {
+    schtasks(&["/Query", "/TN", name]).is_ok()
+}
+
+/// Sets (`Some`) or deletes (`None`) a string value under Grid's own key in `root`.
+fn set_grid_value(root: HKEY, name: &str, value: Option<&str>) -> Result<(), String> {
+    match value {
+        Some(v) => write_values(root, GRID_KEY, &[(name, Value::Str(v.into()))]),
+        None => {
+            let (key, name) = (wide(GRID_KEY), wide(name));
+            unsafe { RegDeleteKeyValueW(root, key.as_ptr(), name.as_ptr()) };
+            Ok(())
+        }
+    }
+}
+
+/// Whether this copy offers starting for all users and as administrator (installed for all
+/// users only).
+pub fn machine_startup_available() -> bool {
+    current_scope() == Some(Scope::AllUsers)
+}
+
+/// The entries that start Grid installed as `scope` (`None`: not installed, so none), for the
+/// signed-in user.
+fn entries_for(scope: Option<Scope>) -> Entries {
+    let Some(scope) = scope else { return Entries::default() };
+    let user = read_string(HKEY_CURRENT_USER, RUN_KEY, RUN_VALUE).is_some();
+    if scope != Scope::AllUsers {
+        return Entries { user, ..Entries::default() };
+    }
+    Entries {
+        user,
+        all_users: read_string(HKEY_LOCAL_MACHINE, RUN_KEY, RUN_VALUE).is_some(),
+        user_task: task_exists(&user_task_name(&current_user())),
+        admins_task: read_string(HKEY_LOCAL_MACHINE, GRID_KEY, ADMINS_TASK_VALUE).is_some(),
+        opt_out: read_string(HKEY_CURRENT_USER, GRID_KEY, OPT_OUT_VALUE).is_some(),
+    }
+}
+
+/// The entries that start this copy of Grid, for the signed-in user.
+pub fn startup_entries() -> Entries {
+    entries_for(current_scope())
+}
+
+/// The start options of the Grid installed on this PC, for the setup window (which usually runs
+/// from a downloaded copy elsewhere, so `startup` wouldn't see them). `None` if Grid isn't
+/// installed. Reinstalling with these keeps them as they are.
+pub fn installed_startup() -> Option<Startup> {
+    let scope = existing_install().or(current_scope())?;
+    Some(Startup::from_entries(entries_for(Some(scope)), crate::elevation::user_is_admin()))
+}
+
+/// The start-with-Windows checkboxes, as things are.
+pub fn startup() -> Startup {
+    Startup::from_entries(startup_entries(), crate::elevation::user_is_admin())
+}
+
+/// Makes Grid start with Windows as `to` says. Changes to the all-users entry or the
+/// administrator tasks need administrator rights, which Windows asks for first. Returns the
+/// options as they now are.
+pub fn set_startup(to: Startup) -> Result<Startup, String> {
+    if to.me && current_scope().is_none() {
         return Err("Install Grid to start it with Windows.".into());
     }
+    if (to.all_users || to.admin || to.all_admins) && !machine_startup_available() {
+        return Err("Only for Grid installed for all users.".into());
+    }
+    let is_admin = crate::elevation::user_is_admin();
+    let (from, want) = (startup_entries(), to.entries(is_admin));
+    if from.needs_admin(want) {
+        let user = current_user();
+        if can_write_machine() {
+            set_machine_startup(want, &user)?;
+        } else {
+            let bit = |on: bool| if on { "1" } else { "0" };
+            let args = format!("{STARTUP} {} {} {} \"{user}\"", bit(want.all_users), bit(want.user_task), bit(want.admins_task));
+            if !run_elevated_and_wait(&args)? {
+                return Err("Not changed: Windows' administrator prompt was declined.".into());
+            }
+        }
+    }
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    set_autostart_for(&exe, on)
+    set_user_startup(&exe, want)?;
+    Ok(Startup::from_entries(want, is_admin))
+}
+
+/// Puts this user's parts of `e` in place (no administrator rights needed): their own start
+/// entry for `exe`, and whether they skip the machine-wide starts.
+pub fn set_user_startup(exe: &Path, e: Entries) -> Result<(), String> {
+    set_run_entry(HKEY_CURRENT_USER, exe, e.user)?;
+    set_grid_value(HKEY_CURRENT_USER, OPT_OUT_VALUE, e.opt_out.then_some("1"))
+}
+
+/// For a Grid started at sign-in: why it should quit at once, if it should (see
+/// `Entries::quits_at_sign_in`). Task Scheduler is only asked when it matters: when the
+/// all-users entry exists, the only one that can start a normal copy alongside an administrator
+/// task (`Startup::entries` never pairs this user's own entry with one).
+pub fn quit_at_sign_in() -> Option<&'static str> {
+    if !machine_startup_available() {
+        return None;
+    }
+    if read_string(HKEY_CURRENT_USER, GRID_KEY, OPT_OUT_VALUE).is_some() {
+        return Some("this user turned off starting with Windows");
+    }
+    let elevated = crate::elevation::is_self_elevated();
+    let shared = read_string(HKEY_LOCAL_MACHINE, RUN_KEY, RUN_VALUE).is_some();
+    (!elevated && shared && startup_entries().quits_at_sign_in(false, crate::elevation::user_is_admin()))
+        .then_some("an administrator task starts Grid for this user")
+}
+
+/// Removes this user's own start entry and opt-out (when uninstalling; the rest needs
+/// administrator rights and is removed by `uninstall`).
+pub fn remove_user_startup() {
+    let _ = set_run_entry(HKEY_CURRENT_USER, Path::new(""), false);
+    let key = wide(GRID_KEY);
+    unsafe { RegDeleteTreeW(HKEY_CURRENT_USER, key.as_ptr()) };
+}
+
+/// `--startup <all users> <user task> <administrators task> <user>` (each 1 or 0), run as
+/// administrator by `set_startup`: the parts of `e` that need administrator rights. The user is
+/// passed in because an administrator's password at Windows' prompt runs this as that account.
+pub fn set_machine_startup(e: Entries, user: &str) -> Result<(), String> {
+    if (e.all_users || e.user_task || e.admins_task) && !machine_startup_available() {
+        return Err("Only for Grid installed for all users.".into());
+    }
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    set_machine_startup_for(&exe, e, user)
+}
+
+/// Like `set_machine_startup`, for `exe` installed for all users (e.g. just installed, by a copy
+/// that runs from elsewhere).
+pub fn set_machine_startup_for(exe: &Path, e: Entries, user: &str) -> Result<(), String> {
+    set_run_entry(HKEY_LOCAL_MACHINE, exe, e.all_users)?;
+    set_task(&user_task_name(user), e.user_task.then_some(TaskFor::User(user)), exe)?;
+    set_task(ADMINS_TASK, e.admins_task.then_some(TaskFor::Administrators), exe)?;
+    set_grid_value(HKEY_LOCAL_MACHINE, ADMINS_TASK_VALUE, e.admins_task.then_some("1"))
+}
+
+/// Whom an administrator task starts Grid for.
+#[derive(Clone, Copy)]
+enum TaskFor<'a> {
+    /// When this user (`DOMAIN\name`) signs in.
+    User(&'a str),
+    /// When any member of the Administrators group signs in.
+    Administrators,
+}
+
+/// Creates (`Some`) or deletes (`None`) the administrator task `name`, which starts `exe`.
+fn set_task(name: &str, task: Option<TaskFor>, exe: &Path) -> Result<(), String> {
+    let Some(task) = task else {
+        if task_exists(name) {
+            schtasks(&["/Delete", "/TN", name, "/F"])?;
+        }
+        return Ok(());
+    };
+    let escape = |s: &str| s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
+    // At sign-in, in that user's session, with full rights; never stopped for running long or on
+    // battery, and at normal priority (tasks default to below normal).
+    let (trigger, principal) = match task {
+        TaskFor::User(user) => {
+            let user = escape(user);
+            (
+                format!("<UserId>{user}</UserId>"),
+                format!("<UserId>{user}</UserId><LogonType>InteractiveToken</LogonType>"),
+            )
+        }
+        TaskFor::Administrators => (String::new(), format!("<GroupId>{ADMINISTRATORS_SID}</GroupId>")),
+    };
+    let exe_text = escape(&exe.display().to_string());
+    let xml = format!(
+        r#"<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo><Description>Starts Grid with administrator rights at sign-in, so it can move windows of apps run as administrator. Turn it off in Grid's Settings → General.</Description></RegistrationInfo>
+  <Triggers><LogonTrigger><Enabled>true</Enabled>{trigger}</LogonTrigger></Triggers>
+  <Principals><Principal id="Author">{principal}<RunLevel>HighestAvailable</RunLevel></Principal></Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+    <Priority>4</Priority>
+  </Settings>
+  <Actions Context="Author"><Exec><Command>{exe_text}</Command><Arguments>{AUTOSTART}</Arguments></Exec></Actions>
+</Task>
+"#
+    );
+    // schtasks reads the file as UTF-16 (little-endian, with a byte order mark). It goes in the
+    // install folder, which only administrators can change: in a folder the user can write to
+    // (e.g. %TEMP%), another program could swap it before schtasks reads it and so get its own
+    // command run as administrator.
+    let dir = exe.parent().ok_or("Could not find the install folder.")?;
+    let path = dir.join("grid-task.xml");
+    let bytes: Vec<u8> = std::iter::once(0xFEFF).chain(xml.encode_utf16()).flat_map(u16::to_le_bytes).collect();
+    std::fs::write(&path, bytes).map_err(|e| format!("Could not write {}: {e}", path.display()))?;
+    let result = schtasks(&["/Create", "/TN", name, "/XML", &path.to_string_lossy(), "/F"]);
+    let _ = std::fs::remove_file(&path);
+    result
+}
+
+/// The exe a Run-key entry starts: `"C:\...\grid.exe" --autostart` or an older `"C:\...\grid.exe"`.
+fn run_entry_exe(entry: &str) -> &str {
+    match entry.strip_prefix('"') {
+        Some(rest) => rest.split('"').next().unwrap_or(rest),
+        None => entry.split(' ').next().unwrap_or(entry),
+    }
 }
 
 /// Removes a start-with-Windows entry that points at this exe when it isn't installed (left
@@ -309,18 +569,20 @@ pub fn remove_portable_autostart() -> bool {
     let (Ok(exe), Some(entry)) = (std::env::current_exe(), read_string(HKEY_CURRENT_USER, RUN_KEY, RUN_VALUE)) else {
         return false;
     };
-    if !same_dir(Path::new(entry.trim_matches('"')), &exe) {
+    if !same_dir(Path::new(run_entry_exe(&entry)), &exe) {
         return false;
     }
-    set_autostart_for(&exe, false).is_ok()
+    set_run_entry(HKEY_CURRENT_USER, &exe, false).is_ok()
 }
 
-fn set_autostart_for(exe: &Path, on: bool) -> Result<(), String> {
+/// Adds or removes the Run-key entry that starts `exe` at sign-in: this user's (HKCU) or all
+/// users' (HKLM, needs administrator rights).
+fn set_run_entry(root: HKEY, exe: &Path, on: bool) -> Result<(), String> {
     if on {
-        write_values(HKEY_CURRENT_USER, RUN_KEY, &[(RUN_VALUE, Value::Str(format!("\"{}\"", exe.display())))])
+        write_values(root, RUN_KEY, &[(RUN_VALUE, Value::Str(format!("\"{}\" {AUTOSTART}", exe.display())))])
     } else {
         let (key, value) = (wide(RUN_KEY), wide(RUN_VALUE));
-        unsafe { RegDeleteKeyValueW(HKEY_CURRENT_USER, key.as_ptr(), value.as_ptr()) };
+        unsafe { RegDeleteKeyValueW(root, key.as_ptr(), value.as_ptr()) };
         Ok(())
     }
 }

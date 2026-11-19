@@ -26,6 +26,8 @@ mod monitors;
 mod os_settings;
 mod overlay;
 mod positions;
+mod safe_file;
+mod signature;
 mod splash;
 mod theme;
 mod tray;
@@ -60,11 +62,16 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 pub use actions::notify_settings_changed;
 pub use admin::{engine_elevated, restart_engine_elevated};
 pub use capture::{PARENT_ENV as CAPTURE_PARENT_ENV, capture_hotkey, capture_input};
-pub use elevation::RESTARTED;
+pub use elevation::{RESTARTED, is_self_elevated, user_is_admin};
 pub use monitors::Monitor;
+/// Writes one of Grid's own files, with extra checks while running as administrator (see
+/// `safe_file`). For `grid_core::store::set_writer`.
+pub use safe_file::write as write_file;
 pub use os_settings::{drag_full_windows, set_drag_full_windows};
-pub use ui::{ask_yes_no, center_window, enforce_min_size, monitors, open_url, set_dark_window, show_message, system_dark, use_app_icon};
+pub use ui::{ask_yes_no, center_window, enforce_min_size, load_dlls_from_system32, monitors, open_url, set_dark_window, show_message, system_dark, use_app_icon};
 
+/// The error `run` returns when another Grid engine is already running.
+pub const ALREADY_RUNNING: &str = "Grid is already running.";
 /// Title of the settings window; used to find and focus it instead of opening a second one.
 pub const SETTINGS_TITLE: &str = "Grid Settings";
 /// Title of the setup (install) window.
@@ -162,6 +169,11 @@ pub fn run(settings_path: PathBuf, restarted: bool) -> Result<(), String> {
     let settings = Settings::load(&settings_path).0;
     let positions_path = settings_path.with_file_name("positions.json");
     let settings_modified = modified(&settings_path);
+    // Restarted without administrator rights to install an update (see
+    // `update::restart_unelevated_to_update`): wait for the old Grid, then install it.
+    let pending = settings_path.with_file_name(update::UPDATE_PENDING);
+    let update_now = pending.exists() && std::fs::remove_file(&pending).is_ok();
+    let restarted = restarted || update_now;
     unsafe {
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
@@ -175,7 +187,7 @@ pub fn run(settings_path: PathBuf, restarted: bool) -> Result<(), String> {
             }
             tries -= 1;
             if tries == 0 {
-                return Err("Grid is already running.".into());
+                return Err(ALREADY_RUNNING.into());
             }
             if !mutex.is_null() {
                 CloseHandle(mutex);
@@ -231,9 +243,14 @@ pub fn run(settings_path: PathBuf, restarted: bool) -> Result<(), String> {
             splash::show(settings.appearance);
         }
         let hotkey_errors = hotkeys::register(msg_hwnd, &settings.hotkeys);
-        // Not right after an update or a restart as administrator: that Grid just started.
-        if settings.updates.check_at_startup && !restarted {
-            let (silent, engine) = (settings.updates.install_silently, msg_hwnd as usize);
+        // Not right after an update or a restart as administrator: that Grid just started. Right
+        // away, without asking again, after restarting to install an update.
+        let engine = msg_hwnd as usize;
+        if update_now && !elevation::is_self_elevated() {
+            log::write("Restarted without administrator rights to install an update");
+            std::thread::spawn(move || update::check(false, true, engine));
+        } else if settings.updates.check_at_startup && !restarted {
+            let silent = settings.updates.install_silently;
             std::thread::spawn(move || update::check(false, silent, engine));
         }
 

@@ -168,7 +168,7 @@ impl Settings {
 
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
         let json = serde_json::to_string_pretty(self).map_err(std::io::Error::other)?;
-        std::fs::write(path, json)
+        crate::store::write(path, json.as_bytes())
     }
 
     /// Grid for the monitor with this stable `id`.

@@ -164,15 +164,47 @@ unsafe extern "system" fn min_size_proc(
     unsafe { DefSubclassProc(hwnd, msg, wparam, lparam) }
 }
 
-/// Opens a web page in the user's default browser. Only `https://` addresses, so this can't be
-/// used to start programs.
+/// Opens a web page in the user's default browser. Only `https://` addresses (without quotes), so
+/// this can't be used to start programs. When Grid runs as administrator, the page is handed to
+/// Windows Explorer, which opens it in the user's normal browser: started straight from here,
+/// the browser would get administrator rights too.
 pub fn open_url(url: &str) {
     use windows_sys::Win32::UI::Shell::ShellExecuteW;
     use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
-    if !url.starts_with("https://") {
+    if !url.starts_with("https://") || url.contains('"') {
         return;
     }
-    unsafe { ShellExecuteW(null_mut(), wide("open").as_ptr(), wide(url).as_ptr(), null(), null(), SW_SHOWNORMAL) };
+    if crate::elevation::is_self_elevated() {
+        open_unelevated(url);
+    } else {
+        unsafe { ShellExecuteW(null_mut(), wide("open").as_ptr(), wide(url).as_ptr(), null(), null(), SW_SHOWNORMAL) };
+    }
+}
+
+/// Opens `target` (a web page, or a program to start) through Windows Explorer, which hands it
+/// to the Explorer already running for the user: so it opens without administrator rights even
+/// when Grid has them. (Not with arguments: Explorer doesn't pass any.) Returns false if it
+/// couldn't be handed over.
+pub(crate) fn open_unelevated(target: &str) -> bool {
+    use windows_sys::Win32::System::SystemInformation::GetWindowsDirectoryW;
+    use windows_sys::Win32::UI::Shell::ShellExecuteW;
+    use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+    if target.contains('"') {
+        return false;
+    }
+    // Found in the Windows folder, not by name.
+    let mut dir = [0u16; 260];
+    let len = unsafe { GetWindowsDirectoryW(dir.as_mut_ptr(), dir.len() as u32) } as usize;
+    if len == 0 || len >= dir.len() {
+        return false;
+    }
+    let explorer = format!("{}\\explorer.exe", String::from_utf16_lossy(&dir[..len]));
+    let args = format!("\"{target}\"");
+    // ShellExecute reports success with a value above 32.
+    let result = unsafe {
+        ShellExecuteW(null_mut(), wide("open").as_ptr(), wide(&explorer).as_ptr(), wide(&args).as_ptr(), null(), SW_SHOWNORMAL)
+    };
+    result as usize > 32
 }
 
 /// Connected monitors, with bounds in physical pixels.
@@ -180,4 +212,14 @@ pub fn monitors() -> Vec<Monitor> {
     // So bounds are physical pixels even when called before any window exists.
     unsafe { SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) };
     crate::monitors::list()
+}
+
+/// Makes DLLs this process loads from now on come from System32 only, never from the exe's own
+/// folder or the current folder: a downloaded grid.exe runs from e.g. Downloads (also as
+/// administrator, when installing), where a planted DLL with a system DLL's name would otherwise
+/// be loaded. Call first thing. (The DLLs grid.exe imports directly are covered by a linker
+/// setting, see grid-app's build.rs.)
+pub fn load_dlls_from_system32() {
+    use windows_sys::Win32::System::LibraryLoader::{LOAD_LIBRARY_SEARCH_SYSTEM32, SetDefaultDllDirectories};
+    unsafe { SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_SYSTEM32) };
 }

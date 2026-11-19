@@ -6,5 +6,7 @@ pub mod logo;
 pub mod positions;
 pub mod session;
 pub mod settings;
+pub mod startup;
+pub mod store;
 pub mod update;
 pub mod zones;

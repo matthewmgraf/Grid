@@ -4,10 +4,16 @@
 use std::path::{Path, PathBuf};
 
 fn main() {
+    // Before anything else can load a DLL (see the function).
+    #[cfg(windows)]
+    grid_windows::load_dlls_from_system32();
     let path = settings_path();
     // grid.log next to grid.json: starts, exits, errors and freezes only (never input).
     #[cfg(windows)]
     grid_windows::log::init(&path);
+    // grid.json and positions.json, written with checks while running as administrator.
+    #[cfg(windows)]
+    grid_core::store::set_writer(grid_windows::write_file);
     let args: Vec<String> = std::env::args().collect();
     let has_arg = |flag: &str| args.iter().any(|a| a == flag);
     let arg_after = |flag: &str| args.iter().position(|a| a == flag).and_then(|i| args.get(i + 1)).cloned();
@@ -21,10 +27,13 @@ fn main() {
         admin_prompt(&path)
     } else if has_arg("--setup") {
         setup::run(false)
-    } else if let Some(scope) = arg_after("--install") {
-        setup::install_elevated(&scope)
+    } else if let Some(at) = args.iter().position(|a| a == "--install") {
+        let scope = args.get(at + 1).cloned().unwrap_or_default();
+        setup::install_elevated(&scope, args.get(at + 2..).unwrap_or_default())
+    } else if let Some(at) = args.iter().position(|a| a == "--startup") {
+        setup::machine_startup(args.get(at + 1..).unwrap_or_default())
     } else if has_arg("--uninstall") {
-        setup::uninstall(has_arg("--confirmed"))
+        setup::uninstall(has_arg("--confirmed"), arg_after("--user"))
     } else if let Some(version) = arg_after("--apply-update") {
         setup::apply_update(&version)
     } else {
@@ -92,7 +101,7 @@ mod setup {
             format!("Grid is already installed {} on this PC. Installing again replaces it with this copy.", scope_text(scope))
         });
         let shown: fn() = || grid_windows::use_app_icon(grid_windows::SETUP_TITLE);
-        match grid_settings::ask_setup(existing, Some(shown), super::look())? {
+        match grid_settings::ask_setup(existing, Some(shown), super::look(), grid_windows::user_is_admin(), install::installed_startup())? {
             None => Ok(()),
             Some(SetupChoice::Portable) => {
                 if first_run {
@@ -103,25 +112,48 @@ mod setup {
                 }
                 Ok(())
             }
-            Some(SetupChoice::Install { all_users, autostart }) => {
+            Some(SetupChoice::Install { all_users, startup }) => {
                 let scope = if all_users { Scope::AllUsers } else { Scope::CurrentUser };
+                let (entries, user) = (startup.entries(grid_windows::user_is_admin()), install::current_user());
+                // A running Grid is closed by `install_files`, just before its exe is replaced (not
+                // earlier: if the user declines Windows' prompt, it keeps running).
+                // With an administrator start chosen, the administrator step below starts Grid,
+                // so it runs as administrator straight away (not only from the next sign-in).
+                let mut started = false;
                 let exe = if scope == Scope::AllUsers && !install::can_write_machine() {
-                    if !install::run_elevated_and_wait(&format!("--install {}", scope.arg()))? {
+                    // The start options that need administrator rights go with the install, so
+                    // Windows asks only once.
+                    let bit = |on: bool| if on { "1" } else { "0" };
+                    let args = format!(
+                        "--install {} {} {} {} \"{user}\"",
+                        scope.arg(),
+                        bit(entries.all_users),
+                        bit(entries.user_task),
+                        bit(entries.admins_task)
+                    );
+                    if !install::run_elevated_and_wait(&args)? {
                         return Ok(()); // the user said no to Windows' prompt
                     }
+                    started = startup.admin;
                     install::install_dir(scope).ok_or("Could not find the install folder.")?.join("grid.exe")
                 } else {
-                    install::install_files(scope)?
+                    let exe = install::install_files(scope)?;
+                    if scope == Scope::AllUsers {
+                        install::set_machine_startup_for(&exe, entries, &user)?;
+                    }
+                    exe
                 };
-                install::finish_install(&exe, autostart);
-                // A portable Grid may still be running (Install from its settings window).
-                install::close_running_engine();
-                install::launch(&exe, &[grid_windows::RESTARTED])?;
+                install::finish_install(&exe, entries);
+                // If the administrator step couldn't start Grid, start it normally.
+                if !(started && install::wait_for_engine(std::time::Duration::from_secs(5))) {
+                    install::launch(&exe, &[grid_windows::RESTARTED])?;
+                }
+                let admin = if startup.admin { " It runs as administrator, now and at every sign-in." } else { "" };
                 grid_windows::show_message(
                     "Grid",
                     &format!(
-                        "Grid is installed {} and running. You can find it in the Start menu, and remove \
-                         it from Windows Settings → Apps. This downloaded copy is no longer needed.",
+                        "Grid is installed {} and running.{admin} You can find it in the Start menu, and \
+                         remove it from Windows Settings → Apps. This downloaded copy is no longer needed.",
                         scope_text(scope)
                     ),
                     false,
@@ -131,44 +163,74 @@ mod setup {
         }
     }
 
-    /// `--install all|user`: the part of installing that needs administrator rights. Run by
-    /// `run` through Windows' administrator prompt; the exit code reports success.
-    pub fn install_elevated(scope: &str) -> Result<(), String> {
+    /// `--install all|user [<all users> <user task> <administrators task> <user>]`: the part of
+    /// installing that needs administrator rights, and for all users, the start options that do
+    /// too (each 1 or 0; see `machine_startup`). Run by `run` through Windows' administrator
+    /// prompt; the exit code reports success.
+    pub fn install_elevated(scope: &str, startup: &[String]) -> Result<(), String> {
         let scope = Scope::from_arg(scope).ok_or_else(|| format!("Unknown install type \"{scope}\"."))?;
-        install::install_files(scope).map(|_| ())
+        let exe = install::install_files(scope)?;
+        if scope == Scope::AllUsers && startup.len() == 4 {
+            let (entries, user) = startup_args(startup)?;
+            install::set_machine_startup_for(&exe, entries, &user)?;
+            // Started from here, it runs as administrator (see `run`). Not an error if it can't:
+            // Grid is installed, and `run` then starts it normally.
+            if (entries.user_task || entries.admins_task)
+                && let Err(e) = install::launch(&exe, &[grid_windows::RESTARTED])
+            {
+                grid_windows::log::write(&format!("Could not start Grid as administrator after installing: {e}"));
+            }
+        }
+        Ok(())
+    }
+
+    /// Reads `<all users> <user task> <administrators task> <user>` (each 1 or 0).
+    fn startup_args(args: &[String]) -> Result<(grid_core::startup::Entries, String), String> {
+        let bit = |i: usize| args.get(i).is_some_and(|a| a == "1");
+        let user = args.get(3).ok_or("Missing the user for the start options.")?;
+        let entries = grid_core::startup::Entries { all_users: bit(0), user_task: bit(1), admins_task: bit(2), ..Default::default() };
+        Ok((entries, user.clone()))
     }
 
     /// `--uninstall`: from Windows Settings → Apps, or Settings → General. Asks first unless
     /// `confirmed` (the administrator copy started after the user already said yes).
-    pub fn uninstall(confirmed: bool) -> Result<(), String> {
+    pub fn uninstall(confirmed: bool, user: Option<String>) -> Result<(), String> {
         let Some(scope) = install::current_scope() else {
             grid_windows::show_message("Grid", "This copy of Grid isn't installed, so there is nothing to uninstall.", false);
             return Ok(());
         };
         if confirmed {
             // The administrator half, started below: settings are handled by the normal half.
-            return install::uninstall(scope);
+            return install::uninstall(scope, &user.unwrap_or_else(install::current_user));
         }
         let shown: fn() = || grid_windows::use_app_icon(grid_windows::UNINSTALL_TITLE);
         let Some(delete_settings) = grid_settings::ask_uninstall(&super::settings_path(), Some(shown), super::look())? else {
             return Ok(());
         };
         if scope == Scope::AllUsers && !install::can_write_machine() {
-            if !install::run_elevated_and_wait("--uninstall --confirmed")? {
+            let args = format!("--uninstall --confirmed --user \"{}\"", install::current_user());
+            if !install::run_elevated_and_wait(&args)? {
                 return Ok(()); // the user said no to Windows' prompt
             }
         } else {
-            install::uninstall(scope)?;
+            install::uninstall(scope, &install::current_user())?;
         }
         // Also here, in the user's own process: the administrator copy above may run as another
         // account (an administrator's password at Windows' prompt) and so clear that one's entry.
-        let _ = install::set_autostart(false);
+        install::remove_user_startup();
         if delete_settings {
             install::delete_settings();
         }
         let kept = if delete_settings { "" } else { " Your settings are kept, in case you install it again." };
         grid_windows::show_message("Grid", &format!("Grid has been uninstalled.{kept}"), false);
         Ok(())
+    }
+
+    /// `--startup <all users> <user task> <administrators task> <user>` (each 1 or 0): the
+    /// administrator half of Settings → General → start with Windows (see `install::set_startup`).
+    pub fn machine_startup(args: &[String]) -> Result<(), String> {
+        let (entries, user) = startup_args(args)?;
+        install::set_machine_startup(entries, &user)
     }
 
     /// `--apply-update <version>`: run as administrator by an update of an all-users install, to
@@ -196,10 +258,13 @@ mod setup {
     pub fn run(_first_run: bool) -> Result<(), String> {
         Err("Installing isn't supported on this platform yet.".into())
     }
-    pub fn install_elevated(_scope: &str) -> Result<(), String> {
+    pub fn install_elevated(_scope: &str, _startup: &[String]) -> Result<(), String> {
         run(false)
     }
-    pub fn uninstall(_confirmed: bool) -> Result<(), String> {
+    pub fn machine_startup(_args: &[String]) -> Result<(), String> {
+        run(false)
+    }
+    pub fn uninstall(_confirmed: bool, _user: Option<String>) -> Result<(), String> {
         run(false)
     }
     pub fn apply_update(_version: &str) -> Result<(), String> {
@@ -215,8 +280,10 @@ fn settings(path: &Path) -> Result<(), String> {
             installed: || grid_windows::install::current_scope().is_some(),
             install: setup::start_install,
             uninstall: setup::start_uninstall,
-            autostart: grid_windows::install::autostart,
-            set_autostart: grid_windows::install::set_autostart,
+            startup: grid_windows::install::startup,
+            set_startup: grid_windows::install::set_startup,
+            machine_startup: grid_windows::install::machine_startup_available,
+            user_is_admin: grid_windows::user_is_admin,
         }),
         admin: Some(grid_settings::Admin {
             engine_elevated: grid_windows::engine_elevated,
@@ -318,7 +385,11 @@ fn admin_prompt(path: &Path) -> Result<(), String> {
         grid_windows::use_app_icon(grid_windows::ADMIN_PROMPT_TITLE);
         grid_windows::center_window(grid_windows::ADMIN_PROMPT_TITLE);
     };
-    let (yes, mute) = grid_settings::ask_admin_restart(path, Some(shown), look())?;
+    // The tip about starting as administrator only for accounts that can (Settings hides it for
+    // others).
+    let offered = grid_windows::install::machine_startup_available() && grid_windows::user_is_admin();
+    let admin_autostart = offered.then(|| grid_windows::install::startup().admin);
+    let (yes, mute) = grid_settings::ask_admin_restart(path, Some(shown), look(), admin_autostart)?;
     if yes {
         println!("yes");
     }
@@ -348,8 +419,22 @@ fn engine(path: &Path) -> Result<(), String> {
     if grid_windows::install::is_first_run() && !restarted {
         return setup::run(true);
     }
+    // Started at sign-in: this user may have opted out of the all-users start, or an administrator
+    // task may start Grid for them too (e.g. with "For all users" on as well).
+    let autostart = std::env::args().any(|a| a == grid_windows::install::AUTOSTART);
+    if let Some(why) = autostart.then(grid_windows::install::quit_at_sign_in).flatten() {
+        grid_windows::log::write(&format!("Not started at sign-in: {why}"));
+        return Ok(());
+    }
     println!("Grid {} is running. Settings: {}", env!("CARGO_PKG_VERSION"), path.display());
-    grid_windows::run(path.to_owned(), restarted)
+    match grid_windows::run(path.to_owned(), restarted) {
+        // Two ways of starting at sign-in both did: no need to say so.
+        Err(e) if autostart && e == grid_windows::ALREADY_RUNNING => {
+            grid_windows::log::write("Not started at sign-in: Grid is already running");
+            Ok(())
+        }
+        result => result,
+    }
 }
 
 #[cfg(not(windows))]

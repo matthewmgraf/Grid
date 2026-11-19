@@ -8,6 +8,8 @@ pub const LATEST_RELEASE_URL: &str = "https://api.github.com/repos/matthewmgraf/
 
 /// File name of the program in a release's downloads.
 const ASSET_NAME: &str = "grid.exe";
+/// File name of its signature in a release's downloads (see grid-windows' `signature`).
+const SIGNATURE_NAME: &str = "grid.exe.sig";
 
 /// A release that can be installed.
 #[derive(Debug, Clone, PartialEq)]
@@ -18,6 +20,9 @@ pub struct Release {
     pub download_url: String,
     /// Size of `grid.exe` in bytes, to check the download is complete.
     pub size: u64,
+    /// Direct download of `grid.exe.sig`, its signature; `None` if the release has none (it
+    /// isn't installed then).
+    pub signature_url: Option<String>,
     /// The release's page on GitHub, for release notes.
     pub page_url: String,
 }
@@ -49,8 +54,22 @@ pub fn parse_latest(json: &str) -> Result<Release, String> {
         version: api.tag_name.trim_start_matches(['v', 'V']).to_string(),
         download_url: asset.browser_download_url.clone(),
         size: asset.size,
+        signature_url: api
+            .assets
+            .iter()
+            .find(|a| a.name.eq_ignore_ascii_case(SIGNATURE_NAME))
+            .map(|a| a.browser_download_url.clone()),
         page_url: api.html_url,
     })
+}
+
+/// What a release's signature (`grid.exe.sig`) signs: a line naming the version, then `grid.exe`.
+/// Signing the version too means an older signed `grid.exe` can't be republished as a newer
+/// version. Must match `tools/sign-release.ps1`.
+pub fn signed_data(version: &str, exe: &[u8]) -> Vec<u8> {
+    let mut data = format!("Grid release {version}\n").into_bytes();
+    data.extend_from_slice(exe);
+    data
 }
 
 /// Whether version `candidate` (e.g. "0.10.0") is newer than `current` (e.g. "0.9.2").
@@ -97,13 +116,20 @@ mod tests {
             "html_url": "https://github.com/matthewmgraf/Grid/releases/tag/v0.2.0",
             "assets": [
                 { "name": "notes.txt", "browser_download_url": "https://example.invalid/notes.txt", "size": 10 },
-                { "name": "grid.exe", "browser_download_url": "https://example.invalid/grid.exe", "size": 9500000 }
+                { "name": "grid.exe", "browser_download_url": "https://example.invalid/grid.exe", "size": 9500000 },
+                { "name": "grid.exe.sig", "browser_download_url": "https://example.invalid/grid.exe.sig", "size": 64 }
             ]
         }"#;
         let r = parse_latest(json).unwrap();
         assert_eq!(r.version, "0.2.0");
         assert_eq!(r.download_url, "https://example.invalid/grid.exe");
         assert_eq!(r.size, 9_500_000);
+        assert_eq!(r.signature_url.as_deref(), Some("https://example.invalid/grid.exe.sig"));
+    }
+
+    #[test]
+    fn signed_data_names_the_version() {
+        assert_eq!(signed_data("1.2.0", b"MZ"), b"Grid release 1.2.0\nMZ");
     }
 
     #[test]

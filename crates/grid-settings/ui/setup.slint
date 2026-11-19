@@ -107,6 +107,12 @@ export component SetupWindow inherits Window {
     /// Non-empty when Grid is already installed on this PC: says so above the choices.
     in property <string> existing;
     in-out property <bool> autostart: true;
+    /// Start-with-Windows sub-options (used when installing for all users).
+    in-out property <bool> autostart-all-users;
+    in-out property <bool> autostart-admin;
+    in-out property <bool> autostart-all-admins;
+    /// Whether the user's account is an administrator: the administrator options are shown.
+    in property <bool> user-is-admin;
     /// "all", "user" or "portable".
     callback chosen(string);
     callback canceled();
@@ -162,8 +168,37 @@ export component SetupWindow inherits Window {
                 text: "Start Grid when Windows starts";
                 checked <=> root.autostart;
             }
+            // Same sub-options as Settings → General (see grid-core's `startup`).
+            VerticalLayout {
+                padding-left: 28px;
+                spacing: 4px;
+                CheckBox {
+                    text: "For all users on this PC";
+                    checked <=> root.autostart-all-users;
+                }
+                if root.user-is-admin: CheckBox {
+                    text: "As administrator";
+                    enabled: root.autostart || root.autostart-all-admins;
+                    checked <=> root.autostart-admin;
+                    toggled => {
+                        if !self.checked {
+                            root.autostart-all-admins = false;
+                        }
+                    }
+                }
+                if root.user-is-admin: HorizontalLayout {
+                    padding-left: 28px;
+                    CheckBox {
+                        text: "For all administrators on this PC";
+                        enabled: root.autostart-admin;
+                        checked <=> root.autostart-all-admins;
+                    }
+                }
+            }
             Text {
-                text: "Only when installed: Grid can't start with Windows when run without installing.";
+                text: root.user-is-admin
+                    ? "Only when installed: Grid can't start with Windows when run without installing. The options under it are for \"Install for all users\" only. As administrator, Grid can move windows of apps run as administrator (e.g. Task Manager) without asking."
+                    : "Only when installed: Grid can't start with Windows when run without installing. \"For all users\" is for \"Install for all users\" only.";
                 wrap: word-wrap;
                 width: 510px;
                 font-size: 12px;

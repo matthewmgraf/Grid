@@ -27,10 +27,10 @@ Notes for AI assistants and contributors. Maintainers may keep extra private not
 | Settings UI | Slint 1.18, software renderer, Fluent style, in its own process (`grid.exe --settings`). Measured: ~34 MB working set vs 129–311 MB for GPU renderers/egui. |
 | Look | "Glass" on every Grid window, following Windows light/dark (or the Appearance setting). Slint windows (settings, setup, uninstall, admin prompt): Windows 11 Acrylic via `window-vibrancy` behind a tint (solid while inactive, as Windows does), shared in `ui/theme.slint`; dark title bar via DWM. Font: Plus Jakarta Sans (SIL OFL, `ui/fonts/`). Grid-drawn windows (`theme.rs`) draw text with `swash`, as Slint does (GDI renders this font badly at small sizes). Splash: solid card in the same colors (the overlay's blur can't follow rounded corners). Tray menu: Grid's own popup (`menu.rs`) with the system Acrylic backdrop, sized to its text, 12 px like Settings. |
 | Code signing | Not yet. |
-| Install model | Same exe can install itself (Program Files or per-user, Start menu, optional autostart) or run portably. Only installed copies can start with Windows, to steer users to installing; a portable copy removes an old Run entry pointing at itself. The installer recommends an administrator install ("for the best compatibility") but also offers a per-user install that needs no admin rights. |
+| Install model | Same exe can install itself (Program Files or per-user, Start menu, optional autostart) or run portably. Only installed copies can start with Windows, to steer users to installing; a portable copy removes an old Run entry pointing at itself. The installer recommends an administrator install ("for the best compatibility") but also offers a per-user install that needs no admin rights. All-users installs also offer starting for all users (HKLM Run key) and as administrator, for the user or all administrators (Task Scheduler tasks via `schtasks`: logon trigger, highest run level; the Administrators group for the latter). Not offered for per-user installs, whose exe the user could swap for anything to run as administrator. The checkbox model and which entries it means are in `grid_core::startup`; sign-in starts pass `--autostart`, so a copy quits quietly (and logs why) if Grid already runs, the user opted out of the all-users start (`HKCU\Software\Grid`, set by unticking the top box), or, for a normal copy, an administrator task covers that user. The all-administrators task is also recorded in `HKLM\Software\Grid`: a normal process can't see that group's task. A standard account can't see the administrator boxes, so its changes keep them as they are. |
 | Admin windows | Windows (UIPI) stops a normal Grid moving windows of apps run as administrator (e.g. Task Manager). When such a drag ends, Grid asks whether to restart with administrator rights (No / Yes, one popup at a time). "Don't ask again until Grid restarts" mutes it for the session; Settings → General → "Never prompt to start Grid as administrator" turns it off (`ask_to_run_as_admin`). It can't ask only when a snap is attempted: a normal Grid doesn't see input to admin windows (tested: `GetAsyncKeyState` and Raw Input with `RIDEV_INPUTSINK` both see nothing). Settings → General also has a "Restart Grid as administrator" button. Yes relaunches via UAC (`runas`, `--restarted`). |
 | Settings storage | JSON file. Portable: next to the exe. Installed: `%APPDATA%\Grid`. |
-| Logging | Errors and lifecycle only. Never log keystrokes (or other input, or window titles). `grid.log` next to `grid.json`, renamed to `grid.log.old` past 256 KB (`log.rs`). Records starts/exits with reasons, errors shown, panics, sleep/resume, sign-out, and freezes: a watchdog thread pings the engine every 10 s and logs what the main thread was handling if it takes over 5 s (`watchdog.rs`). |
+| Logging | Errors and lifecycle only. Never log keystrokes (or other input, or window titles). `grid.log` next to `grid.json`, moved to `grid.log.old` past 256 KB (`log.rs`). Records starts/exits with reasons, errors shown, panics, sleep/resume, sign-out, and freezes: a watchdog thread pings the engine every 10 s and logs what the main thread was handling if it takes over 5 s (`watchdog.rs`). |
 | Mixed DPI | Allow snapping across monitors with different scaling. After `SetWindowPos`, re-check the rect because DPI-aware apps resize themselves on `WM_DPICHANGED`; correct it if needed. |
 
 ## Features
@@ -95,6 +95,7 @@ Cargo workspace:
   - `zones`: grid cells, cross-monitor span selection (`select_span` grows the bounding box to
     take in zones it covers by at least half), move snapping, `apply_gaps`.
   - `session`: the Resize/Move/Cancel state machine for one drag. Platform layers feed it input.
+  - `startup`: the start-with-Windows checkboxes and which OS entries they mean.
   - `settings`: JSON settings model with defaults; inputs written as names like `"Space"`, `"RightMouse"`.
   - `history`: undo stack (last 10 snaps). `positions`: saved window snapshot + `match_windows`.
   - `update`: reading GitHub's latest release and comparing versions. `logo`: the logo.
@@ -114,7 +115,7 @@ Cargo workspace:
   - Modes: `grid.exe` (engine), `--settings`, `--capture`, `--capture-hotkey`, `--admin-prompt`,
     `--setup` (install window; also shown on the first run of a downloaded exe with no
     `grid.json` next to it), `--install all|user` (the administrator half of installing),
-    `--uninstall` (Apps & features), `--apply-update <version>` (administrator half of an all-users update: downloads and checks the file itself).
+    `--uninstall` (Apps & features), `--apply-update <version>` (administrator half of an all-users update: downloads and checks the file itself), `--startup <all users> <user task> <admins task> <user>` (administrator half of the start-with-Windows options), `--autostart` (started at sign-in).
   - Settings path: `grid.json` next to the exe when portable, `%APPDATA%\Grid\grid.json` when
     installed (`install::settings_path`).
   - Installing: Program Files or `%LOCALAPPDATA%\Programs\Grid`, Start menu shortcut via
@@ -124,7 +125,20 @@ Cargo workspace:
     SentinelOne flagged an update chain deleting its own old exe as malware hiding its tracks).
   - Testing updates without a release: a debug build started with `GRID_TEST_UPDATE=<path to a
     grid.exe>` offers that file as an update.
-  - Updates: WinHTTP, GitHub latest release, asset `grid.exe`; see `RELEASING.md`.
+  - Updates: WinHTTP, GitHub latest release, assets `grid.exe` and `grid.exe.sig`; see `RELEASING.md`.
+    The signature (ECDSA P-256 over SHA-256 of `Grid release <version>\n` then the exe, see
+    `grid_core::update::signed_data`, so an old signed exe can't pose as a newer version; checked
+    with Windows' bcrypt in `signature.rs`) must
+    match the release key built in from `crates/grid-windows/release-key.hex`, or the update isn't
+    installed. The private key stays offline with the owner (`tools/new-signing-key.ps1`,
+    `tools/sign-release.ps1`, which reads the version from the exe). An elevated Grid outside Program
+    Files doesn't update itself (it would rename and delete files in a folder the user can change):
+    it asks, leaves `grid-update-pending` next to the settings, restarts through Explorer (so
+    unelevated) and exits; the new Grid sees the file and installs the update without asking again.
+  - DLLs come from System32 only (linker `/DEPENDENTLOADFLAG:0x800` in grid-app's `build.rs`, and
+    `SetDefaultDllDirectories` at startup): a downloaded grid.exe runs from e.g. Downloads, also as
+    administrator, where a planted DLL would otherwise load.
+  - An elevated Grid opens web pages through Explorer, so the browser doesn't run as administrator.
   - Release builds have no console.
 - Later: `crates/grid-macos` with its own `run`, reusing `grid-core` and `grid-settings`.
 
@@ -139,6 +153,7 @@ Implementation notes:
   With blur off, cells are outlines only. It is kept directly below the dragged window so that
   window stays sharp. `cargo test -p grid-windows preview -- --ignored` with
   `GRID_OVERLAY_PREVIEW=<file.bmp>` renders a preview without dragging.
+- Grid's own files (`grid.log`, `grid.json`, `positions.json`) sit in a folder the user owns. While Grid runs as administrator it writes them through `safe_file.rs` (`grid_core::store` for the core's): no following a link at the end, the handle's real path must be the one asked for (no junction on the way), one hard link only, and the write goes through that checked handle; the log is rotated by copying, not renaming. Otherwise a program running as the user could redirect Grid's administrator writes onto protected files.
 - Hotkeys use `RegisterHotKey`; the settings window posts `Grid.SettingsChanged` to the engine
   after saving. Window positions are saved to `positions.json` next to `grid.json`.
 - Measured: engine ~22 MB working set / 6.5 MB private at start, ~34 MB / 9 MB after a day of use (Task Manager shows ~10 MB); settings window ~34 MB / 10 MB;

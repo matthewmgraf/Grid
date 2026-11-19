@@ -2,9 +2,9 @@
 //! Never input: no keys, buttons or window titles.
 //!
 //! Written to `grid.log` next to `grid.json` (so portable copies keep it in their folder). When
-//! it passes `MAX_BYTES` it is renamed to `grid.log.old`, replacing the previous one.
+//! it passes `MAX_BYTES` its contents move to `grid.log.old`, replacing the previous one. Written
+//! through `safe_file`, which checks the files first while Grid runs as administrator.
 
-use std::io::Write;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
@@ -14,6 +14,9 @@ use windows_sys::Win32::System::SystemInformation::GetLocalTime;
 const MAX_BYTES: u64 = 256 * 1024;
 
 static PATH: OnceLock<PathBuf> = OnceLock::new();
+/// Set when moving the log to grid.log.old was refused (see `safe_file`), so it isn't tried again
+/// (reading the whole log) for every line this process writes.
+static ROTATION_REFUSED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Where the log goes. Call once at startup; until then nothing is written.
 pub fn init(settings_path: &std::path::Path) {
@@ -27,8 +30,12 @@ pub fn init(settings_path: &std::path::Path) {
 /// Adds a line with the time, process ID and what this process is (`role`, e.g. "engine").
 pub fn write(message: &str) {
     let Some(path) = PATH.get() else { return };
-    if std::fs::metadata(path).is_ok_and(|m| m.len() > MAX_BYTES) {
-        let _ = std::fs::rename(path, path.with_extension("log.old"));
+    use std::sync::atomic::Ordering::Relaxed;
+    if !ROTATION_REFUSED.load(Relaxed)
+        && std::fs::metadata(path).is_ok_and(|m| m.len() > MAX_BYTES)
+        && crate::safe_file::rotate(path, &path.with_extension("log.old")).is_err()
+    {
+        ROTATION_REFUSED.store(true, Relaxed);
     }
     let mut t: SYSTEMTIME = unsafe { std::mem::zeroed() };
     unsafe { GetLocalTime(&mut t) };
@@ -45,7 +52,5 @@ pub fn write(message: &str) {
         message.replace('\n', " | ")
     );
     // Opened per line: lines are rare, and several Grid processes may write at once.
-    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
-        let _ = file.write_all(line.as_bytes());
-    }
+    let _ = crate::safe_file::append(path, line.as_bytes());
 }

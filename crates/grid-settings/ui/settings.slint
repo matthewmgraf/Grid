@@ -278,13 +278,23 @@ export component SettingsWindow inherits Window {
     in property <bool> install-available;
     in property <string> install-status;
     in property <bool> installed;
-    /// Start with Windows; changed right away (not with Save).
+    /// Start with Windows, and its sub-options; changed right away (not with Save).
     in-out property <bool> autostart;
+    in-out property <bool> autostart-all-users;
+    in-out property <bool> autostart-admin;
+    in-out property <bool> autostart-all-admins;
+    /// Which sub-options are offered: for all users (installed for all users only), and as
+    /// administrator (also only for administrator accounts).
+    in property <bool> all-users-startup-available;
+    in property <bool> admin-startup-available;
+    /// A start-with-Windows change is underway (Windows may be asking for administrator rights).
+    in property <bool> install-busy;
+    /// Any start-with-Windows checkbox was toggled.
+    callback startup-changed();
     in-out property <bool> update-at-startup: true;
     in-out property <bool> update-silently;
     callback install-clicked();
     callback uninstall-clicked();
-    callback autostart-changed(bool);
     /// The engine's administrator state: 0 not running, 1 normal, 2 administrator.
     in property <bool> admin-available;
     in property <int> admin-state;
@@ -529,9 +539,50 @@ export component SettingsWindow inherits Window {
                                 Text { text: root.install-status; wrap: word-wrap; }
                                 CheckBox {
                                     text: "Start Grid when Windows starts";
-                                    enabled: root.installed;
+                                    enabled: root.installed && !root.install-busy;
                                     checked <=> root.autostart;
-                                    toggled => { root.autostart-changed(self.checked); }
+                                    toggled => { root.startup-changed(); }
+                                }
+                                // Sub-options (see grid-core's `startup`): the top box is about this user only;
+                                // the machine-wide ones change only with their own boxes.
+                                if root.all-users-startup-available: VerticalLayout {
+                                    padding-left: 28px;
+                                    spacing: 4px;
+                                    CheckBox {
+                                        text: "For all users on this PC";
+                                        // Not tied to the box above: that one is about this user only.
+                                        enabled: !root.install-busy;
+                                        checked <=> root.autostart-all-users;
+                                        toggled => { root.startup-changed(); }
+                                    }
+                                    if root.admin-startup-available: CheckBox {
+                                        text: "As administrator";
+                                        enabled: (root.autostart || root.autostart-all-admins) && !root.install-busy;
+                                        checked <=> root.autostart-admin;
+                                        toggled => {
+                                            if !self.checked {
+                                                root.autostart-all-admins = false;
+                                            }
+                                            root.startup-changed();
+                                        }
+                                    }
+                                    if root.admin-startup-available: HorizontalLayout {
+                                        padding-left: 28px;
+                                        CheckBox {
+                                            text: "For all administrators on this PC";
+                                            enabled: root.autostart-admin && !root.install-busy;
+                                            checked <=> root.autostart-all-admins;
+                                            toggled => { root.startup-changed(); }
+                                        }
+                                    }
+                                    Text {
+                                        text: root.admin-startup-available
+                                            ? "As administrator, Grid can move windows of apps run as administrator (e.g. Task Manager) without asking. Windows asks for administrator rights to change these options."
+                                            : "Windows asks for administrator rights to change this option.";
+                                        wrap: word-wrap;
+                                        font-size: 12px;
+                                        opacity: 0.75;
+                                    }
                                 }
                                 if !root.installed: Text {
                                     text: "Only for installed copies. Install Grid to start it with Windows.";
